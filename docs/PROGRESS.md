@@ -9,7 +9,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. Hand Quality Gate at `/hand`.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
-- **YouCam units used:** about 5 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
+- **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 ## Build plan tracker
 
@@ -163,6 +163,8 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - inspo-7's half-hidden thumb (a sliver against a lit sweater of almost the same green) still leaks into the sweater; its colour is still green.
 - inspo-6: tapping inside a chrome loop outlines the area inside the loop, not the whole nail, and the chrome itself isn't an accent. Fine for the base colour; the vision model (Day 5) should name chrome/ombré.
 - Thresholds were tuned on these 3 photos only. Real phone test needed.
+
+**First real per-finger render (1 unit, total about 6 of 1,000):** inspo-7 picked locally (`dev-live`) and rendered on the studio hand photo. YouCam put each colour on the right finger: cream on the ring nail, dark green on the others (lighter green thumb). Its rows are kept so the unit ledger stays accurate; only the duplicate dev-mode session was deleted. Pushed to `main` (deploys to Vercel).
 
 **Next step:** user tests tap-to-pick on their phone. Then Day 5: DeepSeek semantics (texture, pattern, confidence per finger) via Vercel, and design PNGs for art nails.
 
