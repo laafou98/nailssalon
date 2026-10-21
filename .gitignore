@@ -43,3 +43,6 @@ next-env.d.ts
 # project
 !.env.example
 test-output/
+
+# copied from node_modules by scripts/copy-mediapipe.mjs
+/public/mediapipe/wasm/

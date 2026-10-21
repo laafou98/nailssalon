@@ -86,7 +86,7 @@ interface FingerSpec {
 - `@mediapipe/tasks-vision` HandLandmarker (WASM, ~5 MB, lazy-loaded).
 - Checks, mirroring YouCam's documented failure modes:
   - exactly 1 hand (`numHands: 2`, reject if 2)
-  - palm bounding box ≥ 50% of the frame (Nail VTO requirement)
+  - palm ≥ half the image area (Nail VTO guidance): we auto-crop around the hand to 1:1, 3:4 or 4:3, then check the hand box covers ≥ 50% of the crop
   - all 5 fingertip landmarks inside the frame, back of hand facing camera (handedness + z-order)
   - sharpness: variance of Laplacian on fingertip crops
   - exposure: mean luminance in range

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-mediapipe.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-mediapipe.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -11,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.1.1",
     "@supabase/supabase-js": "^2.118.0",
     "next": "16.4.2",
     "react": "19.3.0",
