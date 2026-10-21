@@ -125,4 +125,9 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - The paid render was recovered locally with the fixed code (`dev-live` launch config, polling is free) and saved as `renders/<id>.png`. Chrome on coral `#F0645A` came out closer to red, with strong streaks: tune the metallic preset during colour matching (Day 7). The side-on thumb was still painted.
 - Vercel runtime logs aren't readable through the MCP (403), like deployments.
 
+**Render quality (user feedback after the 2nd real render: "looks cheap", nails brighter than the hand, camera looks low-res)**
+- Camera: the photo was a frame from the video preview (low-res, heavily compressed on phones). Now the capture uses `ImageCapture.takePhoto()` (full-resolution still, flash forced off) where supported (Chrome/Android), falling back to the video frame (iOS). The result line shows which was used ("from a 4000×3000 camera photo").
+- Render look, prototyped offline on both real renders + the studio smoke test (`scripts/prototypes/true_colour_composite.py`, comparison in `test-output/true-colour-comparison.png`): the cheap look = Chrome's built-in streaks and **hue drift (coral #F0645A came back as saturated red)** + a crisp, noise-free nail on a dim, noisy photo. A "true-colour composite" (YouCam's mask + shading, exact requested hue in OKLab, cleaned mask edges, the photo's grain) fixes hue and the too-clean look and leaves good renders unchanged. Estimating scene brightness/saturation (to make nails sit darker in a dim room) was unreliable on these samples, so it's disabled. Not built into the app yet: decision pending with the user.
+- Units: 4 of 1,000 (the user's 2nd render).
+
 **Next step:** Day 4, landmark-guided nail crops on inspiration photos ([B]) and OKLab colour clustering.

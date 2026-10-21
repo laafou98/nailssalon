@@ -27,6 +27,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
   const [error, setError] = useState<string | null>(null);
   const [mirrored, setMirrored] = useState(false);
   const [holdProgress, setHoldProgress] = useState(0);
+  const [captureInfo, setCaptureInfo] = useState<string | null>(null);
   // Updated every frame (the report only a few times a second) so the 3D guide tracks the hand smoothly.
   const [pose, setPose] = useState<HandPose | null>(null);
 
@@ -150,12 +151,22 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
   };
 
   const captureFrame = async (landmarker: HandLandmarker, video: HTMLVideoElement) => {
-    const still = document.createElement("canvas");
-    still.width = video.videoWidth;
-    still.height = video.videoHeight;
-    still.getContext("2d")!.drawImage(video, 0, 0);
+    setPhase("checking");
+    // Prefer a real photo from the camera: video frames are low-resolution and heavily
+    // compressed on phones. Falls back to the video frame where ImageCapture isn't supported (iOS).
+    let still: HTMLCanvasElement | ImageBitmap | null = await takeFullPhoto(streamRef.current);
+    const source = still ? "camera photo" : "video frame";
+    if (!still) {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d")!.drawImage(video, 0, 0);
+      still = canvas;
+    }
+    setCaptureInfo(`from a ${still.width}×${still.height} ${source}`);
     stopCamera();
     await checkStill(landmarker, still);
+    if (still instanceof ImageBitmap) still.close();
   };
 
   const captureNow = async () => {
@@ -174,6 +185,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     if (!file) return;
     stopCamera();
     setError(null);
+    setCaptureInfo("from your uploaded photo");
     setPhase("loading");
     try {
       const [landmarker, bitmap] = await Promise.all([
@@ -310,7 +322,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
           <img src={photo.url} alt="Your hand photo, cropped and ready" className="w-full rounded-2xl" />
           <p className="text-lg font-medium text-emerald-600 dark:text-emerald-400">Photo ready for try-on</p>
           <p className="text-xs text-zinc-500">
-            {photo.width}×{photo.height} JPEG · {Math.round(photo.blob.size / 1024)} KB · 21 landmarks saved
+            {photo.width}×{photo.height} JPEG {captureInfo} · {Math.round(photo.blob.size / 1024)} KB · 21 landmarks saved
           </p>
         </div>
       )}
@@ -342,6 +354,24 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
       )}
     </div>
   );
+}
+
+/** Full-resolution still from the camera via ImageCapture (Chrome on Android/desktop), or null. */
+async function takeFullPhoto(stream: MediaStream | null): Promise<ImageBitmap | null> {
+  const track = stream?.getVideoTracks()[0];
+  if (!track || typeof ImageCapture === "undefined") return null;
+  try {
+    const capture = new ImageCapture(track);
+    const caps = await capture.getPhotoCapabilities();
+    const settings: PhotoSettings = {};
+    // Never fire the flash: it flattens the nails and blows out the colour.
+    if (caps.fillLightMode?.includes("off")) settings.fillLightMode = "off";
+    if (caps.imageWidth?.max) settings.imageWidth = caps.imageWidth.max;
+    const blob = await capture.takePhoto(settings);
+    return await createImageBitmap(blob, { imageOrientation: "from-image" });
+  } catch {
+    return null;
+  }
 }
 
 const ICON: Record<CheckResult["status"], string> = { pass: "✓", warn: "!", fail: "✕" };
