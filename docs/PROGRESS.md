@@ -5,11 +5,11 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 3 of 12 done (Oct 21, 2026, two days early). Next: **Day 4, landmark crops on inspiration photos + colour clustering**.
+- **Day:** 3 of 12 done (Oct 21, 2026, two days early). **Day 4 in progress:** tap-to-pick nails on inspiration photos + colour clustering (MediaPipe can't read inspiration photos; see the last session entry).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. Hand Quality Gate at `/hand`.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
-- **YouCam units used:** 2 of 1,000 (smoke test on Oct 20).
+- **YouCam units used:** about 5 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 ## Build plan tracker
 
@@ -18,7 +18,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 1 | Oct 20–21 | Scaffold, Supabase schema + RLS, YouCam client, deploy | ✅ Done |
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
-| 4 | Oct 24 | [B] Landmark crops on inspiration photos, colour clustering | ⏭ Next |
+| 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ⏭ In progress |
 | 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
@@ -131,3 +131,14 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - Units: 4 of 1,000 (the user's 2nd render).
 
 **Next step:** Day 4, landmark-guided nail crops on inspiration photos ([B]) and OKLab colour clustering.
+
+### Session 2 (cont.), Oct 21, 2026: Day 4 started
+**Camera test:** the user tested the full-resolution capture and a Cream render on their phone: "cream looks decent". (Whether the result line said "camera photo" or "video frame" wasn't reported; check next time.)
+
+**Inspiration test images** (from the user, git-ignored): `test-output/inspo/inspo-5.jpg` (two overlapping hands, nude French + white bows + tiny rhinestones), `inspo-6.jpg` (two interlaced hands, long almond burgundy ombré with chrome outlines), `inspo-7.jpg` (one curled hand, dark green with white swirls + one cream accent nail with green lines).
+
+**Finding: MediaPipe cannot read inspiration photos.** With default settings it finds no hand in any of the three. With `minHandDetectionConfidence` 0.1, 60% grey padding and 0/90/180/270° rotations it "detects" hands with scores up to 0.99, but drawn back on the images the landmarks are nonsense (a tiny hand on the ribbon bow, a hand squeezed onto one nail). Close-up, curled, overlapping nail-art shots are outside its training. Landmark-guided crops ([B] in ARCHITECTURE.md) are dropped for inspiration photos (the client's own hand photo still uses MediaPipe).
+
+**Decision (user, Oct 21): tap-to-pick.** The user taps the nails on the inspiration image in finger order (thumb → pinky; allow skipping or reusing a nail for fingers not visible). For each tap we auto-outline the nail around the tap and extract its colours. Works on any image (curled hands, product shots) and keeps each design on its finger. Later the vision model (Day 5) can pre-place the taps.
+
+**Next step:** build tap-to-pick: nail outline from a tap (region growing in OKLab from the tap point, bounded by colour distance/edges and a max size, cleaned with morphology), oriented crop, skin/background removal, OKLab k-means (k = 2–3) → `baseHex` + `accentHexes` per finger, a draft `DesignSpec` (texture cream by default; pattern/finish from the vision model on Day 5), and UI on `/hand`: upload an inspiration image, tap 5 nails, see swatches per finger, "Try this on my hand" through the existing render pipeline. Pure functions unit-tested (synthetic pixel buffers), verified on the three test images in the browser (`dev-mock` launch config renders for free).
