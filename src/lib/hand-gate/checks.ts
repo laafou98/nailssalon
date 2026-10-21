@@ -14,6 +14,8 @@ export interface Point {
 
 export interface DetectedHand {
   landmarks: Point[]; // 21 points
+  /** The same 21 points in metres, camera-aligned axes, origin at the hand centre. */
+  world?: Required<Point>[];
   /** MediaPipe's handedness label ("Left" | "Right"). */
   handedness: string;
   handednessScore: number;
@@ -28,7 +30,7 @@ export interface PixelStats {
   sharpness: number;
 }
 
-export type CheckId = "hands" | "fingertips" | "orientation" | "coverage" | "size" | "spread" | "sharpness" | "exposure";
+export type CheckId = "hands" | "pose" | "fingertips" | "orientation" | "coverage" | "size" | "spread" | "sharpness" | "exposure";
 export type CheckStatus = "pass" | "warn" | "fail";
 
 export interface CheckResult {
@@ -53,6 +55,23 @@ export interface GateReport {
   headline: string;
   /** Crop (in source pixels) that the normalised output photo will use. */
   crop: Box | null;
+  /** How the hand is turned, for the live 3D guide. Null when there isn't exactly one hand. */
+  pose: HandPose | null;
+  /**
+   * Stricter than `ok`: the camera only takes the photo by itself when the hand
+   * faces it squarely. `ok` alone still allows a manual "Take photo".
+   */
+  autoCapture: boolean;
+}
+
+export interface HandPose {
+  /** How far the back of the hand is turned away from the camera, 0° = flat on. */
+  turnDeg: number;
+  /** Which edge of the hand is further from the camera. */
+  farSide: "thumb" | "pinky";
+  /** Whether that far edge is on the right of the (un-mirrored) image. */
+  farEdgeOnRight: boolean;
+  status: CheckStatus;
 }
 
 export const FINGERTIPS = [4, 8, 12, 16, 20] as const;
@@ -85,6 +104,13 @@ export const THRESHOLDS = {
   lumaBright: 200,
   lumaTooBright: 225,
   clippedFail: 0.2,
+  // Knuckle width (index MCP → pinky MCP) over palm length (wrist → middle MCP)
+  // for a flat hand; the ratio shrinks with cos(turn angle). Our flat test hand
+  // measured 0.70 in live video (0.75–0.81 as stills); the edge-on phone photo
+  // that slipped through on Oct 21 measured 0.28 (≈ 67°).
+  knuckleRatioFlat: 0.72,
+  posePassDeg: 30, // auto-capture only at or below this turn
+  poseFailDeg: 45, // block the photo above this
   cropPadding: 0.12,
   outputLongSide: 2048,
 } as const;
@@ -93,7 +119,7 @@ export const THRESHOLDS = {
 export const ASPECTS = [1, 3 / 4, 4 / 3] as const;
 
 /** Order checks are surfaced in: fix the most fundamental thing first. */
-const PRIORITY: CheckId[] = ["hands", "orientation", "fingertips", "size", "coverage", "exposure", "sharpness", "spread"];
+const PRIORITY: CheckId[] = ["hands", "pose", "orientation", "fingertips", "size", "coverage", "exposure", "sharpness", "spread"];
 
 export function handBox(landmarks: Point[], width: number, height: number): Box {
   const xs = landmarks.map((p) => p.x * width);
@@ -126,6 +152,26 @@ export function facingSide(hand: DetectedHand): "back" | "palm" {
   const cross = (i.x - w.x) * (p.y - w.y) - (i.y - w.y) * (p.x - w.x);
   const rightHandBack = cross > 0;
   return (anatomicalHand(hand.handedness) === "right") === rightHandBack ? "back" : "palm";
+}
+
+/**
+ * How far the hand is turned about its long axis. MediaPipe's 3D world landmarks
+ * proved unreliable for this (they called an edge-on hand flat), so the angle
+ * comes from 2D foreshortening of the knuckle line, and only the direction comes
+ * from MediaPipe's per-landmark depth (z), which did get the near side right.
+ */
+export function handPose(hand: DetectedHand, width: number, height: number): HandPose {
+  const lm = hand.landmarks;
+  const dist = (a: number, b: number) => Math.hypot((lm[a].x - lm[b].x) * width, (lm[a].y - lm[b].y) * height);
+  const ratio = dist(INDEX_MCP, PINKY_MCP) / (dist(WRIST, 9) || 1);
+  const facing = Math.min(1, ratio / THRESHOLDS.knuckleRatioFlat);
+  const turnDeg = Math.round((Math.acos(facing) * 180) / Math.PI);
+  const pinkyFar = (lm[PINKY_MCP].z ?? 0) > (lm[INDEX_MCP].z ?? 0);
+  const far = pinkyFar ? PINKY_MCP : INDEX_MCP;
+  const near = pinkyFar ? INDEX_MCP : PINKY_MCP;
+  const status: CheckStatus =
+    turnDeg > THRESHOLDS.poseFailDeg ? "fail" : turnDeg > THRESHOLDS.posePassDeg ? "warn" : "pass";
+  return { turnDeg, farSide: pinkyFar ? "pinky" : "thumb", farEdgeOnRight: lm[far].x > lm[near].x, status };
 }
 
 /**
@@ -191,11 +237,11 @@ export function evaluateHands(
     } else {
       add("hands", "fail", "Show the back of one hand to the camera");
     }
-    return finish(checks, null);
+    return finish(checks, null, null);
   }
   if (hands.length > 1) {
     add("hands", "fail", "Only one hand in the picture, please");
-    return finish(checks, null);
+    return finish(checks, null, null);
   }
   add("hands", "pass", "One hand found");
 
@@ -204,8 +250,18 @@ export function evaluateHands(
   const box = handBox(lm, width, height);
   const crop = cropForHand(box, width, height);
 
-  // Back of hand facing the camera.
-  if (hand.handednessScore < THRESHOLDS.handednessMinScore) {
+  // Hand turned flat towards the camera, so YouCam sees every nail face-on.
+  const pose = handPose(hand, width, height);
+  const bring = pose.farSide === "pinky" ? "little finger" : "thumb";
+  if (pose.status === "fail") add("pose", "fail", `Turn your hand flat: bring your ${bring} towards the camera`);
+  else if (pose.status === "warn") add("pose", "warn", `Almost: turn your ${bring} a little more towards the camera`);
+  else add("pose", "pass", "Hand flat to the camera");
+
+  // Back of hand facing the camera. Handedness is unreliable when the hand is
+  // edge-on, so only judge it once the pose is roughly flat.
+  if (pose.status === "fail") {
+    // Nothing to say yet: the pose message already tells the user what to do.
+  } else if (hand.handednessScore < THRESHOLDS.handednessMinScore) {
     add("orientation", "warn", "Make sure the back of your hand faces the camera");
   } else if (facingSide(hand) === "palm") {
     add("orientation", "fail", "Turn your hand over: show the back, with your nails");
@@ -257,14 +313,15 @@ export function evaluateHands(
     else add("sharpness", "pass", "Sharp");
   }
 
-  return finish(checks, crop);
+  return finish(checks, crop, pose);
 }
 
-function finish(checks: CheckResult[], crop: Box | null): GateReport {
+function finish(checks: CheckResult[], crop: Box | null, pose: HandPose | null): GateReport {
   const ranked = [...checks].sort((a, b) => PRIORITY.indexOf(a.id) - PRIORITY.indexOf(b.id));
   const firstFail = ranked.find((c) => c.status === "fail");
   const firstWarn = ranked.find((c) => c.status === "warn");
   const ok = !firstFail;
   const headline = firstFail?.message ?? firstWarn?.message ?? "Looks great: hold still";
-  return { checks: ranked, ok, headline, crop };
+  const autoCapture = ok && pose?.status === "pass";
+  return { checks: ranked, ok, headline, crop, pose, autoCapture };
 }

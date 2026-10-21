@@ -92,3 +92,12 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - Still need from the user: own bare-nail hand photo and a messy Pinterest screenshot (see Session 1).
 
 **Next step:** Day 3, `DesignSpec` types, `toNailVtoPayload` (pure, tested against the documented schema), `POST /api/renders` with cache key and unit ledger. Upload the gated hand photo to Supabase Storage as part of it.
+
+**Phone test + fix (same day)**
+- The user tested on their phone. It works, but an almost edge-on hand (turned ≈ 67°) was auto-captured: the back/palm check only *warned* because MediaPipe was unsure, and warnings didn't block capture.
+- New **pose check** (`handPose` in `checks.ts`): how far the hand is turned about its long axis, from 2D foreshortening of the knuckle line (knuckle width / palm length; 0.70 flat in live video, 0.28 on the user's photo). MediaPipe's 3D world landmarks were useless for this: they called the edge-on hand flat. The per-landmark depth (z) does get the near side right, so it gives the direction ("bring your little finger / thumb towards the camera").
+- Thresholds: ≤ 30° pass, 30–45° warn (manual photo only), > 45° fail. New `report.autoCapture`: the camera only takes the photo by itself when the pose passes.
+- **Live 3D guide** (`TiltGuide.tsx`): a small hand card that rotates in 3D with the user's hand (CSS perspective) over a flat dashed target, with a curved arrow for which edge to swing forward; it turns green at "Flat ✓". The palm area on the overlay is tinted pink / amber / green and narrows as the hand turns.
+- UX: the checklist is hidden while the camera is live (headline + guide are enough) and shown on the result; the camera view is capped at 70% of screen height so a portrait phone camera fits with the buttons.
+- Verified in the browser at phone size with a fake camera (user's edge-on photo → blocked with direction; flat photo → green → auto-captured) and by uploading the edge-on photo (rejected). 25 tests pass.
+- Still to check on a real phone: the guide's rotation direction with the rear camera, and palm rejection.

@@ -54,6 +54,7 @@ async function setMode(landmarker: HandLandmarker, mode: Mode) {
 export function toHands(result: HandLandmarkerResult): DetectedHand[] {
   return result.landmarks.map((landmarks, i) => ({
     landmarks,
+    world: result.worldLandmarks[i],
     handedness: result.handedness[i]?.[0]?.categoryName ?? "",
     handednessScore: result.handedness[i]?.[0]?.score ?? 0,
   }));

@@ -2,8 +2,16 @@
 
 import type { HandLandmarker } from "@mediapipe/tasks-vision";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type CheckResult, type DetectedHand, FINGERTIPS, type GateReport, HAND_CONNECTIONS } from "@/lib/hand-gate/checks";
+import {
+  type CheckResult,
+  type DetectedHand,
+  FINGERTIPS,
+  type GateReport,
+  HAND_CONNECTIONS,
+  type HandPose,
+} from "@/lib/hand-gate/checks";
 import { type GatedPhoto, analyze, loadLandmarker, normalisePhoto } from "@/lib/hand-gate/browser";
+import TiltGuide from "./TiltGuide";
 
 type Phase = "idle" | "loading" | "live" | "checking" | "rejected" | "accepted" | "error";
 
@@ -19,6 +27,8 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
   const [error, setError] = useState<string | null>(null);
   const [mirrored, setMirrored] = useState(false);
   const [holdProgress, setHoldProgress] = useState(0);
+  // Updated every frame (the report only a few times a second) so the 3D guide tracks the hand smoothly.
+  const [pose, setPose] = useState<HandPose | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -55,7 +65,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
       canvas.width = analysis.width;
       canvas.height = analysis.height;
       canvas.getContext("2d")!.drawImage(still, 0, 0);
-      drawHands(canvas, analysis.hands, analysis.report.ok, false);
+      drawHands(canvas, analysis.hands, toneOf(analysis.report), false);
       setRejectedUrl(canvas.toDataURL("image/jpeg", 0.8));
       setPhase("rejected");
       return;
@@ -112,11 +122,12 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
         if (overlay) {
           overlay.width = analysis.width;
           overlay.height = analysis.height;
-          drawHands(overlay, analysis.hands, analysis.report.ok);
+          drawHands(overlay, analysis.hands, toneOf(analysis.report));
         }
+        setPose(analysis.report.pose);
         // Pixel checks only run every few frames; only those full reports drive the UI and the hold timer.
         if (withPixels) {
-          okSince = analysis.report.ok ? (okSince ?? now) : null;
+          okSince = analysis.report.autoCapture ? (okSince ?? now) : null;
           if (now - lastReportAt > REPORT_EVERY_MS || !analysis.report.ok) {
             lastReportAt = now;
             setReport(analysis.report);
@@ -184,6 +195,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     setRejectedUrl(null);
     setReport(null);
     setHoldProgress(0);
+    setPose(null);
     setPhase("idle");
   };
 
@@ -201,13 +213,16 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
 
       {/* Camera view stays mounted so the <video> ref exists before the stream starts. */}
       <div
-        className={`relative overflow-hidden rounded-2xl bg-zinc-900 ${live || phase === "loading" ? "" : "hidden"}`}
+        className={`relative mx-auto overflow-hidden rounded-2xl bg-zinc-900 ${
+          phase === "loading" ? "h-64 w-full" : live ? "w-fit max-w-full" : "hidden"
+        }`}
       >
         <video
           ref={videoRef}
           playsInline
           muted
-          className="block w-full"
+          // Capped height so a portrait phone camera fits on screen with the controls.
+          className="block max-h-[70vh] max-w-full"
           style={{ transform: mirrored ? "scaleX(-1)" : undefined }}
         />
         <canvas
@@ -223,6 +238,11 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
         {live && report && (
           <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/70 to-transparent p-4">
             <p className={`text-lg font-medium ${report.ok ? "text-emerald-300" : "text-white"}`}>{report.headline}</p>
+          </div>
+        )}
+        {live && pose && (
+          <div className="absolute right-3 top-16">
+            <TiltGuide pose={pose} mirrored={mirrored} />
           </div>
         )}
         {live && holdProgress > 0 && (
@@ -258,7 +278,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
 
       {live && (
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-zinc-500">Takes the photo automatically when everything is green.</p>
+          <p className="text-sm text-zinc-500">Takes the photo by itself once your hand is flat and everything is green.</p>
           <div className="flex gap-2">
             <button onClick={reset} className="rounded-full border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700">
               Cancel
@@ -301,7 +321,8 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
         </div>
       )}
 
-      {report && phase !== "idle" && phase !== "loading" && <CheckList checks={report.checks} />}
+      {/* While live, the headline and 3D guide say what to do; the full list is for the result. */}
+      {report && (phase === "rejected" || phase === "accepted") && <CheckList checks={report.checks} />}
 
       {(phase === "rejected" || phase === "accepted" || phase === "error") && (
         <div className="flex flex-wrap gap-3">
@@ -345,14 +366,31 @@ function CheckList({ checks }: { checks: CheckResult[] }) {
   );
 }
 
-function drawHands(canvas: HTMLCanvasElement, hands: DetectedHand[], ok: boolean, clear = true) {
+type Tone = "good" | "almost" | "bad";
+
+const toneOf = (report: GateReport): Tone =>
+  report.autoCapture ? "good" : report.ok && report.pose?.status !== "fail" ? "almost" : "bad";
+
+const TONE_RGB: Record<Tone, string> = { good: "52, 211, 153", almost: "252, 211, 77", bad: "244, 114, 182" };
+
+/** Palm outline: wrist, thumb base and the four knuckles. */
+const PALM = [0, 1, 5, 9, 13, 17];
+
+function drawHands(canvas: HTMLCanvasElement, hands: DetectedHand[], tone: Tone, clear = true) {
   const ctx = canvas.getContext("2d")!;
   if (clear) ctx.clearRect(0, 0, canvas.width, canvas.height);
   const scale = Math.max(canvas.width, canvas.height) / 640;
+  const rgb = TONE_RGB[tone];
   ctx.lineWidth = 3 * scale;
-  ctx.strokeStyle = ok ? "rgba(52, 211, 153, 0.9)" : "rgba(255, 255, 255, 0.85)";
+  ctx.strokeStyle = tone === "bad" ? "rgba(255, 255, 255, 0.85)" : `rgba(${rgb}, 0.9)`;
   for (const hand of hands) {
     const p = hand.landmarks.map((l) => ({ x: l.x * canvas.width, y: l.y * canvas.height }));
+    // Tinted palm plate: it narrows to a sliver as the hand turns edge-on.
+    ctx.beginPath();
+    PALM.forEach((k, i) => (i === 0 ? ctx.moveTo(p[k].x, p[k].y) : ctx.lineTo(p[k].x, p[k].y)));
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${rgb}, 0.28)`;
+    ctx.fill();
     ctx.beginPath();
     for (const [a, b] of HAND_CONNECTIONS) {
       ctx.moveTo(p[a].x, p[a].y);
@@ -362,7 +400,7 @@ function drawHands(canvas: HTMLCanvasElement, hands: DetectedHand[], ok: boolean
     for (const t of FINGERTIPS) {
       ctx.beginPath();
       ctx.arc(p[t].x, p[t].y, 7 * scale, 0, Math.PI * 2);
-      ctx.fillStyle = ok ? "rgb(52, 211, 153)" : "rgb(244, 114, 182)";
+      ctx.fillStyle = `rgb(${rgb})`;
       ctx.fill();
     }
   }

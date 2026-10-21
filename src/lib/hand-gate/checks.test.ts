@@ -104,6 +104,34 @@ describe("evaluateHands", () => {
     expect(statusOf(run({ sharpness: 40 }), "sharpness")).toBe("warn");
   });
 
+  it("blocks an edge-on hand and says which way to turn", () => {
+    // Squash the hand horizontally around the middle finger: the knuckle line foreshortens.
+    // Pinky side further from the camera (larger z), as in the real phone photo.
+    const edgeOn = RIGHT_HAND_BACK.map((p, i) => ({ x: 0.5 + (p.x - 0.5) * 0.35, y: p.y, z: i >= 17 ? 0.2 : i <= 4 ? -0.3 : 0 }));
+    const report = evaluateHands([hand({ landmarks: edgeOn, handednessScore: 0.65 })], 1000, 1000, GOOD_PIXELS);
+    expect(statusOf(report, "pose")).toBe("fail");
+    expect(report.ok).toBe(false);
+    expect(report.autoCapture).toBe(false);
+    expect(report.headline).toBe("Turn your hand flat: bring your little finger towards the camera");
+    expect(report.pose).toMatchObject({ farSide: "pinky", status: "fail" });
+    expect(report.pose!.turnDeg).toBeGreaterThan(60);
+  });
+
+  it("allows a slightly turned hand only as a manual photo", () => {
+    const slight = RIGHT_HAND_BACK.map((p) => ({ ...p, x: 0.5 + (p.x - 0.5) * 0.75, z: p.x < 0.45 ? 0.1 : 0 }));
+    const report = evaluateHands([hand({ landmarks: slight })], 1000, 1000, GOOD_PIXELS);
+    expect(statusOf(report, "pose")).toBe("warn");
+    expect(report.headline).toMatch(/almost: turn your thumb/i);
+    expect(report.ok).toBe(true);
+    expect(report.autoCapture).toBe(false);
+  });
+
+  it("auto-captures a flat, good hand", () => {
+    const report = evaluateHands([hand()], 1000, 1000, GOOD_PIXELS);
+    expect(report.autoCapture).toBe(true);
+    expect(report.pose!.turnDeg).toBeLessThan(30);
+  });
+
   it("puts the most fundamental problem in the headline", () => {
     const mirrored = RIGHT_HAND_BACK.map((p) => ({ ...p, x: 1 - p.x }));
     const report = evaluateHands([hand({ landmarks: mirrored })], 1000, 1000, { ...GOOD_PIXELS, meanLuma: 30 });
