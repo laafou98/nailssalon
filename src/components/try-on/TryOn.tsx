@@ -32,6 +32,23 @@ type Render =
 
 const POLL_MS = 2000;
 
+/** JSON body, or a readable error if the server replied with something else (e.g. a platform 500 page). */
+type ApiReply = { error?: string; imageId?: string; id?: string; status?: string; resultUrl?: string; cached?: boolean };
+
+/** The finished states the render API returns (success with a URL, or an error). */
+const toRender = (json: ApiReply): Render =>
+  json.status === "success" && json.resultUrl
+    ? { status: "success", resultUrl: json.resultUrl, cached: Boolean(json.cached) }
+    : { status: "error", error: json.error ?? "unknown_error" };
+
+async function readJson(res: Response): Promise<ApiReply> {
+  try {
+    return (await res.json()) as ApiReply;
+  } catch {
+    return { error: `Server error (${res.status}). Please try again.` };
+  }
+}
+
 export default function TryOn({ photo }: { photo: GatedPhoto }) {
   const [upload, setUpload] = useState<Upload>({ status: "uploading" });
   const [hex, setHex] = useState(SWATCHES[0].hex);
@@ -49,9 +66,13 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
     body.set("landmarks", JSON.stringify(photo.landmarks));
     fetch("/api/hands", { method: "POST", body })
       .then(async (res) => {
-        const json = await res.json();
+        const json = await readJson(res);
         if (cancelled) return;
-        setUpload(res.ok ? { status: "ready", imageId: json.imageId } : { status: "error", error: json.error });
+        setUpload(
+          res.ok && json.imageId
+            ? { status: "ready", imageId: json.imageId }
+            : { status: "error", error: json.error ?? "Upload failed" },
+        );
       })
       .catch((e: unknown) => !cancelled && setUpload({ status: "error", error: String(e) }));
     return () => {
@@ -65,10 +86,10 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
     pollRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`/api/renders/${id}`, { cache: "no-store" });
-        const json = await res.json();
-        if (!res.ok) return setRender({ status: "error", error: json.error });
+        const json = await readJson(res);
+        if (!res.ok) return setRender({ status: "error", error: json.error ?? "unknown_error" });
         if (json.status === "running") return poll(id);
-        setRender(json);
+        setRender(toRender(json));
       } catch (e) {
         setRender({ status: "error", error: String(e) });
       }
@@ -92,10 +113,10 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ handImageId: upload.imageId, spec }),
       });
-      const json = await res.json();
-      if (!res.ok) return setRender({ status: "error", error: json.error });
-      if (json.status === "running") poll(json.id);
-      else setRender(json);
+      const json = await readJson(res);
+      if (!res.ok) return setRender({ status: "error", error: json.error ?? "unknown_error" });
+      if (json.status === "running" && json.id) poll(json.id);
+      else setRender(toRender(json));
     } catch (e) {
       setRender({ status: "error", error: String(e) });
     }

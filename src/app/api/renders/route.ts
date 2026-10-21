@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { RenderError, startRender } from "@/lib/render/service";
+import { errorResponse } from "@/lib/api";
+import { startRender } from "@/lib/render/service";
 import { currentSessionId } from "@/lib/session";
 import { designSpecSchema } from "@/lib/spec/types";
 
@@ -23,7 +24,6 @@ export async function POST(request: Request) {
     const render = await startRender(sessionId, body.data.handImageId, body.data.spec);
     return Response.json(render, { status: render.status === "running" ? 202 : 200 });
   } catch (error) {
-    if (error instanceof RenderError) return Response.json({ error: error.message }, { status: error.httpStatus });
-    throw error;
+    return errorResponse(error, "POST /api/renders");
   }
 }

@@ -119,4 +119,10 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - First real render on the deployed app, from the user's phone (1 unit): confirms signed Supabase URLs work as `src_file_url` and the finish presets look right.
 - React dev mode double-runs the upload effect (two sessions in dev only). Harmless; revisit if it shows up in production.
 
+**First real render (user's phone, Oct 21, 1 unit; total now 3 of 1,000)**
+- YouCam accepted our signed Supabase URL and rendered in seconds, but our poll crashed copying the result: YouCam's result is a **PNG served by S3 as `binary/octet-stream`**, and the private bucket only accepts image types. The route rethrew, so the phone got an empty 500 ("Unexpected end of JSON input").
+- Fixes: detect the image type from magic bytes (`src/lib/render/image-type.ts`, 2 tests); check YouCam *before* the 2-minute timeout so a finished-but-uncollected render isn't thrown away (it has already cost a unit); every route returns JSON errors and logs unexpected ones (`src/lib/api.ts`); the client copes with non-JSON replies.
+- The paid render was recovered locally with the fixed code (`dev-live` launch config, polling is free) and saved as `renders/<id>.png`. Chrome on coral `#F0645A` came out closer to red, with strong streaks: tune the metallic preset during colour matching (Day 7). The side-on thumb was still painted.
+- Vercel runtime logs aren't readable through the MCP (403), like deployments.
+
 **Next step:** Day 4, landmark-guided nail crops on inspiration photos ([B]) and OKLab colour clustering.

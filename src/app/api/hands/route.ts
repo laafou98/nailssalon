@@ -1,3 +1,4 @@
+import { errorResponse } from "@/lib/api";
 import { parseHandUpload } from "@/lib/hand-gate/upload";
 import { ensureSessionId } from "@/lib/session";
 import { putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
@@ -17,19 +18,22 @@ export async function POST(request: Request) {
   const upload = await parseHandUpload(form);
   if (!upload.ok) return Response.json({ error: upload.error }, { status: 400 });
 
-  const sessionId = await ensureSessionId();
-  const hash = sha256(upload.bytes);
-  const path = `hands/${hash}.jpg`;
-  await putObject(path, upload.bytes, "image/jpeg");
-  const image = await upsertImage({
-    session_id: sessionId,
-    kind: "hand",
-    path,
-    sha256: hash,
-    width: upload.meta.width,
-    height: upload.meta.height,
-    landmarks: upload.meta.landmarks,
-  });
-
-  return Response.json({ imageId: image.id, url: await signedUrl(path) }, { status: 201 });
+  try {
+    const sessionId = await ensureSessionId();
+    const hash = sha256(upload.bytes);
+    const path = `hands/${hash}.jpg`;
+    await putObject(path, upload.bytes, "image/jpeg");
+    const image = await upsertImage({
+      session_id: sessionId,
+      kind: "hand",
+      path,
+      sha256: hash,
+      width: upload.meta.width,
+      height: upload.meta.height,
+      landmarks: upload.meta.landmarks,
+    });
+    return Response.json({ imageId: image.id, url: await signedUrl(path) }, { status: 201 });
+  } catch (error) {
+    return errorResponse(error, "POST /api/hands");
+  }
 }

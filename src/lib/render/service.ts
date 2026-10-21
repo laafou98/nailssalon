@@ -5,6 +5,7 @@ import { renderCacheKey, toNailVtoPayload } from "@/lib/spec/payload";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
 import { ENGINES, YouCamError, createTask, getTask } from "@/lib/youcam/client";
+import { sniffImageType } from "./image-type";
 
 /**
  * Render [D], Nail VTO path. One render = one YouCam unit, guarded three ways:
@@ -147,13 +148,16 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   if (!row || row.hand?.session_id !== sessionId) throw new RenderError("Render not found", 404);
   if (row.status !== "running" || !row.youcam_task_id) return view(row);
 
-  if (Date.now() - new Date(row.created_at).getTime() > TASK_TIMEOUT_MS) {
-    await failRender(row.id, "timeout");
-    return { id: row.id, status: "error", error: "timeout" };
-  }
-
+  // Ask YouCam before applying the timeout: a task that finished while nobody was
+  // polling has already cost a unit and must still be collected.
   const state = await getTask(ENGINE, row.youcam_task_id);
-  if (state.status === "running") return { id: row.id, status: "running" };
+  if (state.status === "running") {
+    if (Date.now() - new Date(row.created_at).getTime() > TASK_TIMEOUT_MS) {
+      await failRender(row.id, "timeout");
+      return { id: row.id, status: "error", error: "timeout" };
+    }
+    return { id: row.id, status: "running" };
+  }
   if (state.status === "error") {
     await failRender(row.id, state.error);
     return { id: row.id, status: "error", error: state.error };
@@ -163,9 +167,10 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   const res = await fetch(state.resultUrl);
   if (!res.ok) throw new Error(`Could not download render result (${res.status})`);
   const bytes = new Uint8Array(await res.arrayBuffer());
-  const contentType = res.headers.get("content-type")?.split(";")[0] ?? "image/jpeg";
-  const path = `renders/${row.id}.${contentType === "image/png" ? "png" : "jpg"}`;
-  await putObject(path, bytes, contentType);
+  const type = sniffImageType(bytes);
+  if (!type) throw new Error("Render result is not an image");
+  const path = `renders/${row.id}.${type.ext}`;
+  await putObject(path, bytes, type.contentType);
   const image = await upsertImage({ session_id: sessionId, kind: "render", path, sha256: sha256(bytes) });
   await db
     .from("renders")
