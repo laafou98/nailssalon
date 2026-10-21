@@ -64,6 +64,10 @@ describe("evaluateHands", () => {
     const report = evaluateHands([hand({ landmarks: mirrored })], 1000, 1000, GOOD_PIXELS);
     expect(statusOf(report, "orientation")).toBe("fail");
     expect(report.headline).toMatch(/back/i);
+    // The live guide must show the palm side, not "flat ✓", even though the pose is flat.
+    expect(report.pose).toMatchObject({ status: "pass", facing: "palm" });
+    expect(report.autoCapture).toBe(false);
+    expect(evaluateHands([hand()], 1000, 1000, GOOD_PIXELS).pose?.facing).toBe("back");
   });
 
   it("is rotation-invariant (hand held sideways)", () => {

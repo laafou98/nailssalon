@@ -71,6 +71,8 @@ export interface HandPose {
   farSide: "thumb" | "pinky";
   /** Whether that far edge is on the right of the (un-mirrored) image. */
   farEdgeOnRight: boolean;
+  /** Which side faces the camera; "unsure" while edge-on or when handedness is low-confidence. */
+  facing: "back" | "palm" | "unsure";
   status: CheckStatus;
 }
 
@@ -171,7 +173,7 @@ export function handPose(hand: DetectedHand, width: number, height: number): Han
   const near = pinkyFar ? INDEX_MCP : PINKY_MCP;
   const status: CheckStatus =
     turnDeg > THRESHOLDS.poseFailDeg ? "fail" : turnDeg > THRESHOLDS.posePassDeg ? "warn" : "pass";
-  return { turnDeg, farSide: pinkyFar ? "pinky" : "thumb", farEdgeOnRight: lm[far].x > lm[near].x, status };
+  return { turnDeg, farSide: pinkyFar ? "pinky" : "thumb", farEdgeOnRight: lm[far].x > lm[near].x, facing: "unsure", status };
 }
 
 /**
@@ -264,8 +266,10 @@ export function evaluateHands(
   } else if (hand.handednessScore < THRESHOLDS.handednessMinScore) {
     add("orientation", "warn", "Make sure the back of your hand faces the camera");
   } else if (facingSide(hand) === "palm") {
+    pose.facing = "palm";
     add("orientation", "fail", "Turn your hand over: show the back, with your nails");
   } else {
+    pose.facing = "back";
     add("orientation", "pass", "Back of hand facing the camera");
   }
 
