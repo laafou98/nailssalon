@@ -41,6 +41,18 @@ function headers(): HeadersInit {
   };
 }
 
+/**
+ * Local-only stand-in for YouCam, so the whole render flow can be exercised without
+ * spending units: tasks "succeed" after 3 s and return the hand photo itself.
+ * The colour #000001 makes a task fail with error_no_nail, to exercise failure handling.
+ * Enabled with YOUCAM_MOCK=1, and never in production builds.
+ */
+const mockEnabled = () => process.env.YOUCAM_MOCK === "1" && process.env.NODE_ENV !== "production";
+type MockTask = { src: string; at: number; fail: boolean };
+const mockTasks: Map<string, MockTask> = ((globalThis as { __youcamMock?: Map<string, MockTask> }).__youcamMock ??= new Map());
+export const MOCK_FAIL_COLOR = "#000001";
+const MOCK_PREFIX = "mock_";
+
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const text = await res.text();
   try {
@@ -52,6 +64,13 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 
 /** Create a task and return its task_id. Units are only charged if the task succeeds. */
 export async function createTask(engine: Engine, body: object): Promise<string> {
+  if (mockEnabled()) {
+    const id = `${MOCK_PREFIX}${crypto.randomUUID()}`;
+    const { src_file_url, effects } = body as { src_file_url?: string; effects?: { color?: string }[] };
+    const fail = Boolean(effects?.some((e) => e.color === MOCK_FAIL_COLOR));
+    mockTasks.set(id, { src: String(src_file_url ?? ""), at: Date.now(), fail });
+    return id;
+  }
   const res = await fetch(`${YOUCAM_BASE_URL}/task/${ENGINES[engine].path}`, {
     method: "POST",
     headers: headers(),
@@ -72,6 +91,12 @@ export async function createTask(engine: Engine, body: object): Promise<string> 
 
 /** Fetch the current state of a task once. */
 export async function getTask(engine: Engine, taskId: string): Promise<TaskState> {
+  if (taskId.startsWith(MOCK_PREFIX)) {
+    const task = mockEnabled() ? mockTasks.get(taskId) : undefined;
+    if (!task) return { status: "error", error: "mock_task_not_found" };
+    if (Date.now() - task.at < 3000) return { status: "running" };
+    return task.fail ? { status: "error", error: "error_no_nail" } : { status: "success", resultUrl: task.src };
+  }
   const res = await fetch(
     `${YOUCAM_BASE_URL}/task/${ENGINES[engine].path}/${encodeURIComponent(taskId)}`,
     { headers: headers(), cache: "no-store" },

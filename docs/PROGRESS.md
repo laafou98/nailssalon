@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 2 of 12 done (Oct 21, 2026, a day early). Next: **Day 3, `DesignSpec` + `toNailVtoPayload` + render route**.
+- **Day:** 3 of 12 done (Oct 21, 2026, two days early). Next: **Day 4, landmark crops on inspiration photos + colour clustering**.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. Hand Quality Gate at `/hand`.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -17,8 +17,8 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 |---|---|---|---|
 | 1 | Oct 20–21 | Scaffold, Supabase schema + RLS, YouCam client, deploy | ✅ Done |
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
-| 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ⏭ Next |
-| 4 | Oct 24 | [B] Landmark crops on inspiration photos, colour clustering | |
+| 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
+| 4 | Oct 24 | [B] Landmark crops on inspiration photos, colour clustering | ⏭ Next |
 | 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
@@ -102,3 +102,21 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - Verified in the browser at phone size with a fake camera (user's edge-on photo → blocked with direction; flat photo → green → auto-captured) and by uploading the edge-on photo (rejected). 25 tests pass.
 - Phone test 2: **palm rejection works** (headline "Turn your hand over", photo blocked), but the 3D card showed "Flat ✓" because it only reflected the turn angle. Fixed: `HandPose.facing` (back / palm / unsure) and the card now has a palm reverse face (pink, creases, no nails) that it flips to, with a circular "flip it" arrow; the dashed target swaps thumb side to match the turned-over hand. Checked visually on a temporary page (a screenshot of the phone screen couldn't be re-detected: baked-in overlay lines and a dark scene).
 - Still to check on a real phone: the card's rotation direction with the rear camera, and the new palm flip.
+
+### Session 2 (cont.), Oct 21, 2026: Day 3, render pipeline
+**Built**
+- `src/lib/spec/types.ts`: `DesignSpec` zod schema (per-finger kind / colour / texture / pattern / design image; press-on shape + length), `solidSpec()`.
+- `src/lib/spec/payload.ts`: `toNailVtoPayload` (pure). One parameter preset per finish, only the parameters YouCam allows for each (no transparency on metallic, shimmer only on pearl/shimmer, textured size only on textured); press-on maps the 9 finishes onto YouCam's 3. `renderCacheKey` = sha256 of the exact payload with signed URLs swapped for content identities, so confidence/polish-match edits never cost a unit. 9 tests.
+- `POST /api/hands`: stores the gated photo (re-validated server-side: real JPEG, size read from the SOF marker must match, 256–2048 px, 21 landmarks, ≤ 4 MB). Content-addressed path `hands/<sha256>.jpg`; anonymous session via httpOnly cookie `ns_sid` (`src/lib/session.ts`). 4 tests.
+- `POST /api/renders` + `GET /api/renders/:id` (`src/lib/render/service.ts`): cache hit → result with no unit; else claim the cache key (unique insert stops double-spends), reserve a unit, create the YouCam task with 1 h signed URLs; polling copies the result to `renders/<id>.jpg` straight away. A failed or timed-out (2 min) render is refunded exactly once.
+- Migration `0003_render_units.sql` (applied): `reserve_units` now records the render id, new `refund_units(render_id)`, unique `(session_id, kind, sha256)` on images. Advisors: only the expected INFO notes.
+- `/hand` is now photo → try-on: 6 swatches + colour picker, 5 finishes, "Try it on", hold-to-compare, friendly errors.
+- `YOUCAM_MOCK=1` (local only, never in production) for free end-to-end tests.
+
+**Verified locally with the mock against the real Supabase:** upload → render (≈ 9 s) → result copied to storage → identical request served from cache; forced failure (`#000001`) showed "couldn't find your nails" and refunded the unit; `reserve_units` refuses at the session cap. Test rows and storage objects were deleted afterwards. **No real YouCam units spent** (still 2 of 1,000).
+
+**Open items**
+- First real render on the deployed app, from the user's phone (1 unit): confirms signed Supabase URLs work as `src_file_url` and the finish presets look right.
+- React dev mode double-runs the upload effect (two sessions in dev only). Harmless; revisit if it shows up in production.
+
+**Next step:** Day 4, landmark-guided nail crops on inspiration photos ([B]) and OKLab colour clustering.

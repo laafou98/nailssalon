@@ -17,6 +17,7 @@ A nail design compiler: inspiration photo → editable per-finger spec → rende
 ## Commands
 - `npm run dev`, `npm run build`, `npm test` (Vitest), `npm run typecheck`, `npx eslint src`
 - Locally, Node's outbound fetch needs `NODE_USE_ENV_PROXY=1` (sandbox proxy), e.g. `NODE_USE_ENV_PROXY=1 npm run dev`.
+- Free end-to-end testing: `NODE_USE_ENV_PROXY=1 YOUCAM_MOCK=1 npm run dev` (launch config `dev-mock`). Mock renders return the hand photo after 3 s; colour `#000001` makes one fail. Still writes real rows to Supabase, so clean up test sessions afterwards.
 - YouCam smoke test (2 units): `NODE_USE_ENV_PROXY=1 node --env-file=.env.local scripts/smoke-test.mjs`
 
 ## Gotchas
