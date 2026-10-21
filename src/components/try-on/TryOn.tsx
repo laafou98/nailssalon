@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { GatedPhoto } from "@/lib/hand-gate/browser";
 import { FINGERS, type DesignSpecInput, type Texture } from "@/lib/spec/types";
+import InspoPicker from "./InspoPicker";
 
-/** A first, manual design: one colour and finish on every nail. Day 4–6 adds extraction and the editor. */
+/** Either one colour and finish on every nail, or per-finger colours picked from an inspiration photo. */
 
 const SWATCHES = [
   { name: "Cherry", hex: "#B0123A" },
@@ -55,6 +56,7 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
   const [texture, setTexture] = useState<Texture>("cream");
   const [render, setRender] = useState<Render>({ status: "idle" });
   const [showBefore, setShowBefore] = useState(false);
+  const [mode, setMode] = useState<"colour" | "inspiration">("colour");
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -96,17 +98,20 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
     }, POLL_MS);
   };
 
-  const tryOn = async () => {
-    if (upload.status !== "ready") return;
-    if (pollRef.current) clearTimeout(pollRef.current);
-    setRender({ status: "running" });
-    setShowBefore(false);
-    const spec: DesignSpecInput = {
+  const tryOn = () =>
+    renderSpec({
       version: 1,
       source: { kind: "manual" },
       effectType: "nail_polish",
       fingers: Object.fromEntries(FINGERS.map((f) => [f, { kind: "color", baseHex: hex, texture }])) as DesignSpecInput["fingers"],
-    };
+    });
+
+  const renderSpec = async (spec: DesignSpecInput) => {
+    if (upload.status !== "ready") return;
+    if (pollRef.current) clearTimeout(pollRef.current);
+    setRender({ status: "running" });
+    setShowBefore(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
     try {
       const res = await fetch("/api/renders", {
         method: "POST",
@@ -147,53 +152,73 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
         )}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">Colour</p>
-        <div className="flex flex-wrap gap-2">
-          {SWATCHES.map((s) => (
-            <button
-              key={s.hex}
-              onClick={() => setHex(s.hex)}
-              aria-label={s.name}
-              aria-pressed={hex === s.hex}
-              className={`h-10 w-10 rounded-full border-2 ${hex === s.hex ? "border-zinc-900 dark:border-white" : "border-transparent"}`}
-              style={{ backgroundColor: s.hex }}
-            />
-          ))}
-          <label className="flex h-10 items-center gap-2 rounded-full border border-zinc-300 px-3 text-sm dark:border-zinc-700">
-            <input type="color" value={hex} onChange={(e) => setHex(e.target.value.toUpperCase())} className="h-6 w-6" />
-            {hex}
-          </label>
-        </div>
+      <div className="flex rounded-full border border-zinc-300 p-1 text-sm dark:border-zinc-700" role="tablist">
+        {(["colour", "inspiration"] as const).map((m) => (
+          <button
+            key={m}
+            role="tab"
+            aria-selected={mode === m}
+            onClick={() => setMode(m)}
+            className={`flex-1 rounded-full px-3 py-1.5 ${mode === m ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : ""}`}
+          >
+            {m === "colour" ? "One colour" : "Use an inspiration photo"}
+          </button>
+        ))}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">Finish</p>
-        <div className="flex flex-wrap gap-2">
-          {FINISHES.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setTexture(f.value)}
-              aria-pressed={texture === f.value}
-              className={`rounded-full border px-4 py-2 text-sm ${
-                texture === f.value
-                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
-                  : "border-zinc-300 dark:border-zinc-700"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+      {mode === "inspiration" ? (
+        <InspoPicker onTryOn={renderSpec} busy={busy} />
+      ) : (
+        <>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">Colour</p>
+          <div className="flex flex-wrap gap-2">
+            {SWATCHES.map((s) => (
+              <button
+                key={s.hex}
+                onClick={() => setHex(s.hex)}
+                aria-label={s.name}
+                aria-pressed={hex === s.hex}
+                className={`h-10 w-10 rounded-full border-2 ${hex === s.hex ? "border-zinc-900 dark:border-white" : "border-transparent"}`}
+                style={{ backgroundColor: s.hex }}
+              />
+            ))}
+            <label className="flex h-10 items-center gap-2 rounded-full border border-zinc-300 px-3 text-sm dark:border-zinc-700">
+              <input type="color" value={hex} onChange={(e) => setHex(e.target.value.toUpperCase())} className="h-6 w-6" />
+              {hex}
+            </label>
+          </div>
         </div>
-      </div>
 
-      <button
-        onClick={tryOn}
-        disabled={busy}
-        className="rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
-      >
-        {upload.status === "uploading" ? "Saving your photo…" : render.status === "running" ? "Rendering…" : "Try it on"}
-      </button>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">Finish</p>
+          <div className="flex flex-wrap gap-2">
+            {FINISHES.map((f) => (
+              <button
+                key={f.value}
+                onClick={() => setTexture(f.value)}
+                aria-pressed={texture === f.value}
+                className={`rounded-full border px-4 py-2 text-sm ${
+                  texture === f.value
+                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
+                    : "border-zinc-300 dark:border-zinc-700"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={tryOn}
+          disabled={busy}
+          className="rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+        >
+          {upload.status === "uploading" ? "Saving your photo…" : render.status === "running" ? "Rendering…" : "Try it on"}
+        </button>
+        </>
+      )}
 
       {render.status === "success" && render.cached && (
         <p className="text-xs text-zinc-500">Already rendered this exact look, so no new render was needed.</p>

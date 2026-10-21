@@ -93,7 +93,10 @@ interface FingerSpec {
 - Live guidance overlay: "Move closer", "Show the back of your hand", "Too dark".
 - Output: normalised JPEG (long side ≤ 2048, aspect 3:4 or 1:1), plus landmarks JSON.
 
-### [B] Landmark-guided nail crops (browser)
+### [B] Nail crops (browser)
+> **Changed Oct 21:** MediaPipe can't find hands in real inspiration photos, so inspiration photos use **tap-to-pick** (`src/lib/inspo/`): the user taps the nails thumb → pinky, each tap is outlined by an OKLab region flood and measured with k-means. The landmark approach below still applies to the client's own hand photo.
+
+Original plan (landmark-guided):
 The key technique. Nail Transfer shuffles designs across fingers. We avoid that by locating each finger explicitly.
 - Run HandLandmarker on the **inspiration photo** too.
 - For each finger, use the TIP (4/8/12/16/20) and DIP (3/7/11/15/19) landmarks. The direction DIP→TIP gives the nail axis. Take a rotated crop centred ~70% of the way from DIP to TIP, sized to finger width.

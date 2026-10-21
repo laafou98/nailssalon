@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 3 of 12 done (Oct 21, 2026, two days early). **Day 4 in progress:** tap-to-pick nails on inspiration photos + colour clustering (MediaPipe can't read inspiration photos; see the last session entry).
+- **Day:** 4 of 12 done (Oct 21, 2026, three days early). Tap-to-pick on inspiration photos + OKLab colour clustering works on `/hand` ("Use an inspiration photo"). **Next:** Day 5, DeepSeek semantics (finish/pattern per finger) + design PNGs.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. Hand Quality Gate at `/hand`.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -18,7 +18,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 1 | Oct 20–21 | Scaffold, Supabase schema + RLS, YouCam client, deploy | ✅ Done |
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
-| 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ⏭ In progress |
+| 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
 | 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
@@ -142,3 +142,27 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 **Decision (user, Oct 21): tap-to-pick.** The user taps the nails on the inspiration image in finger order (thumb → pinky; allow skipping or reusing a nail for fingers not visible). For each tap we auto-outline the nail around the tap and extract its colours. Works on any image (curled hands, product shots) and keeps each design on its finger. Later the vision model (Day 5) can pre-place the taps.
 
 **Next step:** build tap-to-pick: nail outline from a tap (region growing in OKLab from the tap point, bounded by colour distance/edges and a max size, cleaned with morphology), oriented crop, skin/background removal, OKLab k-means (k = 2–3) → `baseHex` + `accentHexes` per finger, a draft `DesignSpec` (texture cream by default; pattern/finish from the vision model on Day 5), and UI on `/hand`: upload an inspiration image, tap 5 nails, see swatches per finger, "Try this on my hand" through the existing render pipeline. Pure functions unit-tested (synthetic pixel buffers), verified on the three test images in the browser (`dev-mock` launch config renders for free).
+
+### Session 2 (cont.), Oct 21, 2026: Day 4, tap-to-pick
+**Built** (all in the browser, 0 YouCam units)
+- `src/lib/inspo/oklab.ts`: sRGB ↔ OKLab, hex helpers, whole images as OKLab channel planes.
+- `src/lib/inspo/region.ts`: the nail outline from one tap. The photo is shrunk to a 512 px long side, painted lines are filtered out (grey-level opening + closing, so a swirl doesn't cut a nail in two) and lightness counts half as much as hue (gloss changes a nail's lightness a lot; what separates a dark green nail from a dark green sweater, or a nude nail from skin, is mostly hue). A flood spreads from the tap in order of "path cost" (colour steps, plus a penalty for straying from the tapped colour). At each size we know how strong the edge under the region's border is; among the sizes where it peaks, we keep the one that is strong *and* nail-shaped (convex, fills its box like an ellipse, not a sliver). Then holes are filled, thin leaks cut, a touching white French tip merged, and a principal-axis box measured.
+- `src/lib/inspo/colours.ts`: k-means (k = 4, deterministic start) on the outlined pixels at 2× resolution, skipping glare and border pixels that match the surround (skin caught by the outline). Shading of one polish is merged (lightness at a quarter weight); specks under 5% dropped. Base = largest cluster at its 70th-percentile lightness (curved glossy nails are mostly in shadow); accents = the purest 30% of each other cluster (thin lines blend into the base). Plus a separation score.
+- `src/lib/inspo/pick.ts`: `pickNail` (outline + colours + confidence from shape, size, edge and colour separation), `draftSpec` (taps → `DesignSpec`: `kind: "color"`, cream, solid; skipped fingers copy the nearest picked finger, ties to the thumb side, confidence ≤ 0.3). Nails in one photo are alike, so an outline more than twice the median size is redone with that cap.
+- `src/lib/inspo/browser.ts` + `src/components/try-on/InspoPicker.tsx`: on `/hand`, after the hand photo, a "One colour / Use an inspiration photo" switch. Upload, "Tap your thumb nail" → index → …, outlines drawn with finger labels, a row of 5 swatches (base + accent dots, "copied"/"unsure" labels), Skip / Undo / Redo, "Try this on my hand" → the existing `POST /api/renders`.
+- 22 new tests on synthetic images (plain nail, thin line across it, French tip, dark nail on a look-alike background, size cap, colours with lines/gloss/glare/skin edge, draft spec skipping). 61 tests total.
+
+**Verified** in the Browser pane (phone size, `dev-mock`, the user's 3 photos, taps injected by script):
+- inspo-7: index/middle/pinky dark green (#1A2D21 – #16271C) + pale line accent; ring cream #E2D7C9 + green accent #576E51. Mock render succeeded with all 5 per-finger colours in the request.
+- inspo-5: nude bases (#C3–#D1 pinks) + near-white tip accents, tips merged into the outlines. Undo/redo work.
+- inspo-6: burgundy bases with pale/chrome-grey accents; skipping the middle finger copied the index ("copied").
+- Picking takes about 1.5 s to open a photo and well under 0.1 s per tap on the laptop.
+- Test sessions, rows and storage objects were deleted afterwards (the user's own phone session was left alone).
+
+**Known limits**
+- inspo-7's half-hidden thumb (a sliver against a lit sweater of almost the same green) still leaks into the sweater; its colour is still green.
+- inspo-6: tapping inside a chrome loop outlines the area inside the loop, not the whole nail, and the chrome itself isn't an accent. Fine for the base colour; the vision model (Day 5) should name chrome/ombré.
+- Thresholds were tuned on these 3 photos only. Real phone test needed.
+
+**Next step:** user tests tap-to-pick on their phone. Then Day 5: DeepSeek semantics (texture, pattern, confidence per finger) via Vercel, and design PNGs for art nails.
+
