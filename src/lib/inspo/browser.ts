@@ -2,6 +2,8 @@
 // working (outline) and detail (colour) resolutions the pure code expects,
 // and encodes each nail's cut-out artwork as a PNG.
 
+import { analyze, loadLandmarker } from "@/lib/hand-gate/browser";
+import { showsWholeHand } from "@/lib/hand-gate/checks";
 import { DESIGN_LIMITS, nailDesign, type RgbaImage } from "./design";
 import { toLabImage } from "./oklab";
 import type { InspirationImage, NailPick } from "./pick";
@@ -43,13 +45,20 @@ const sources = new WeakMap<Blob, RgbaImage>();
 /**
  * One nail's artwork as a PNG for Nail VTO (`sub_type: "design"`): cut out of the
  * full-resolution photo, tip up, inside YouCam's size limits and under 1 MB.
+ * Polish on natural nails gets the short-nail window; extensions get the whole
+ * nail on a transparent background (YouCam's press-on rule).
  */
-export async function nailDesignPng(loaded: LoadedInspiration, pick: NailPick, flipped: boolean): Promise<Blob> {
+export async function nailDesignPng(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, extensions: boolean): Promise<Blob> {
   const src = sources.get(loaded.file);
   if (!src) throw new Error("Photo pixels are gone; choose the photo again");
   const scale = src.width / loaded.width;
   for (let shrink = 1; ; shrink *= 0.85) {
-    const img = nailDesign(src, scale, pick.region, loaded.width, pick.colours.base.hex, { flipped, shrink });
+    const img = nailDesign(src, scale, pick.region, loaded.width, pick.colours.base.hex, {
+      flipped,
+      shrink,
+      fit: extensions ? "full" : "natural",
+      transparent: extensions,
+    });
     const canvas = document.createElement("canvas");
     canvas.width = img.width;
     canvas.height = img.height;
@@ -79,6 +88,20 @@ export async function loadInspiration(file: Blob): Promise<LoadedInspiration> {
         scale: DETAIL_SCALE,
       },
     };
+  } finally {
+    bitmap.close();
+  }
+}
+
+/**
+ * True when the "inspiration" photo is really a photo of a whole hand, most
+ * likely the client's own (phones list the latest photos and screenshots first).
+ */
+export async function looksLikeOwnHand(file: Blob): Promise<boolean> {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  try {
+    const { hands } = await analyze(await loadLandmarker(), bitmap, undefined, false);
+    return showsWholeHand(hands);
   } finally {
     bitmap.close();
   }

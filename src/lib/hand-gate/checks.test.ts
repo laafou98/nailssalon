@@ -8,6 +8,7 @@ import {
   evaluateHands,
   facingSide,
   outputSize,
+  showsWholeHand,
 } from "./checks";
 
 // A right hand, back to the camera, fingers up, in a square frame.
@@ -170,5 +171,14 @@ describe("outputSize", () => {
   it("caps the long side at 2048 and keeps the aspect", () => {
     expect(outputSize({ x: 0, y: 0, width: 3000, height: 4000 })).toEqual({ width: 1536, height: 2048 });
     expect(outputSize({ x: 0, y: 0, width: 900, height: 1200 })).toEqual({ width: 900, height: 1200 });
+  });
+});
+
+describe("showsWholeHand", () => {
+  it("is true only when a hand has every fingertip in the frame", () => {
+    expect(showsWholeHand([hand()])).toBe(true);
+    expect(showsWholeHand([])).toBe(false);
+    const cut = RIGHT_HAND_BACK.map((p, i) => (i === 12 ? { ...p, y: -0.05 } : p));
+    expect(showsWholeHand([hand({ landmarks: cut })])).toBe(false);
   });
 });

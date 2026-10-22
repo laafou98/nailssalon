@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toLabImage } from "./oklab";
-import { draftSpec, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "./pick";
+import { asExtensions, draftSpec, guessExtensions, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "./pick";
 import { prepareImage } from "./region";
 import { inEllipse, noise, scene } from "./synthetic.test-helpers";
 
@@ -68,5 +68,37 @@ describe("withDesigns", () => {
     expect(out.fingers.thumb).toMatchObject({ kind: "design", pattern: "art", designImageId: id, baseHex: "#112233" });
     expect(out.fingers.index.kind).toBe("color");
     expect(out.fingers.middle.designImageId).toBe(id);
+  });
+});
+
+describe("guessExtensions", () => {
+  const pickOf = (paint: (x: number, y: number) => boolean) => {
+    const s = scene(120, 120, (x, y) => (paint(x, y) ? [30, 90, 60] : [224, 184, 160]));
+    const lab = toLabImage(s.rgba, 120, 120);
+    return pickNail({ prepared: prepareImage(lab), detail: lab, scale: 1 }, { x: 60, y: 60 });
+  };
+
+  it("reads a long almond nail as almond and long", () => {
+    // Lying sideways: wide rounded cuticle on the left, tapering to a point on the right.
+    const almond = pickOf((x, y) => x >= 28 && x <= 96 && Math.abs(y - 60) <= 16 * Math.min(1, Math.sqrt((96 - x) / 40)) * Math.sqrt(Math.max(0, 1 - ((Math.min(x, 60) - 60) / 32) ** 2)));
+    const g = guessExtensions([almond, almond, null, null, null], 120)!;
+    expect(g.tip).toBe("almond");
+    expect(g.length).toBeGreaterThanOrEqual(1.4);
+  });
+
+  it("reads a short oval nail as oval and short", () => {
+    const oval = pickOf((x, y) => inEllipse(x, y, 60, 60, 18, 23));
+    expect(guessExtensions([oval, null, null, null, null], 120)).toEqual({ tip: "oval", length: 1 });
+  });
+
+  it("returns null with no picks", () => {
+    expect(guessExtensions([null, null, null, null, null], 120)).toBeNull();
+  });
+});
+
+describe("asExtensions", () => {
+  it("switches the spec to press-on nails with a shape and length", () => {
+    const spec = asExtensions(draftSpec([fake("#112233"), null, null, null, null])!, "almond", 1.8);
+    expect(spec).toMatchObject({ effectType: "press_on_nails", shape: "almond_oval", length: 1.8 });
   });
 });

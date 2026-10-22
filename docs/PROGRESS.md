@@ -5,14 +5,15 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 in progress (Oct 22, 2026). Tap-to-pick now copies each nail's **artwork** (design PNG → Nail VTO `sub_type: "design"`), not just its colour; verified with the mock only. **Next:** one real design render (1 unit) on the user's phone, then DeepSeek semantics (finish/pattern per finger, which nails are plain) and the Transfer fallback.
+- **Day:** 5 of 12 in progress (Oct 22, 2026). Tap-to-pick copies each nail's **artwork** (design PNG → Nail VTO `sub_type: "design"`); the user's first real design render worked. New: **Keep my length** (art fitted to natural nails) vs **Extensions** (press-on mode, shape + length guessed from the photo), and a warning when the "inspiration" is really the client's own hand. Extensions verified with the mock only. **Next:** real renders of both modes on the phone, then DeepSeek semantics and the Transfer fallback.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
-- **First real design render** (Day 5): the user tries "Design" fingers on their phone (1 unit). Check that YouCam keeps the art's orientation (we send tip up) and how much fine detail survives.
+- **Real renders of both length modes** (Day 5): "Keep my length" with the short-nail crop, and "Extensions" (press-on: never rendered for real yet). Check what YouCam's `length` 1.0–2.15 actually looks like and adjust the Short/Medium/Long/Extra long steps.
+- **Product decision (user, Oct 22):** natural length is a feature, not a bug. Keep both modes; "Extensions" is a different salon service and price (feeds the Day 7 quote and the recipe card).
 - **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
 - **Render realism, decision pending (user):** build the "true-colour composite" (exact requested hue + photo grain on YouCam's mask; `scripts/prototypes/true_colour_composite.py`) into the pipeline, or fold it into Day 7 colour matching. Cream looks decent on the phone; Chrome looks cheap (streaks, coral → red).
 - **Camera:** confirm on the phone whether the accepted photo says "camera photo" (full-res ImageCapture) or "video frame".
@@ -29,7 +30,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
-| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Design PNGs done (Oct 22); DeepSeek + Transfer fallback next |
+| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Design PNGs + length modes done (Oct 22); DeepSeek + Transfer fallback next |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
@@ -200,3 +201,21 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - Plain nails also default to Design (shading baked in). DeepSeek (next) should pick Colour for plain nails.
 
 **Next step:** user pushes and renders a design on their phone (1 unit). Then DeepSeek semantics via Vercel.
+
+### Session 3 (cont.), Oct 22, 2026: own-hand warning, natural length vs extensions
+**Phone test (1 unit, total ~7):** the design render worked ("works better now"). Two findings:
+1. The inspiration picker showed the user's own earlier screenshot: iPhone's photo picker lists the latest photos/screenshots first, and they picked it as "inspiration" (the app keeps no photos).
+2. Nail Polish VTO keeps the client's real nail length. The user likes that for short nails, but long inspiration art squashed onto short nails looks wrong. Decision: keep natural length as the default and add extensions as a choice.
+
+**Built** (0 YouCam units)
+- **Own-hand warning:** `showsWholeHand` (`hand-gate/checks.ts`, 1 test) + `looksLikeOwnHand` (`inspo/browser.ts`) run MediaPipe on the chosen inspiration photo; a whole hand with all five fingertips in frame shows an amber "This looks like a photo of your own hand…" note with "It's right" to dismiss. Real inspiration close-ups don't trigger the detector (Oct 21 finding). The upload button now says "Choose the nail design you want", with a hint.
+- **Keep my length** (`design.ts`): `artWindow` keeps a 1.3 × width stretch of the nail (a short natural nail) where the art differs most from the base colour (48-bin profile, slight pull to the centre), so motifs stay whole instead of being squashed. `designSize` now widens short crops instead of stretching them to the 522 px minimum height (402 × 522 for 1.3).
+- **Extensions:** effect `press_on_nails` with `shape` = `<tip>_oval` (YouCam's names are tip_cuticle, checked against nails.json thumbnails) and `length`. Cut-outs are the whole nail on a transparent background (YouCam's press-on rule). `guessExtensions` (pick.ts): taper at the outermost 10% of each end (< 0.45 stiletto, < 0.85 almond, else square if boxy, else oval) and length = nail aspect / 1.3 snapped to Short 1.0 / Medium 1.4 / Long 1.8 / Extra long 2.15. UI: "Keep my length / Extensions" switch, shape chips, length chips.
+- Taper fix: measured over the outer 30% it averaged away (inspo-7 almonds read 0.80–0.90, guessed "oval"); over the outer 10% they read 0.57–0.81. The tip direction now comes from the taper on all four inspo-7 nails, not from the photo-up fallback.
+- 11 new tests (84 total).
+
+**Verified** (`dev-mock`, phone size): warning shown for the hand photo and for three app screenshots (including the user's two), not for inspo-5/6/7. inspo-7 guessed Almond + Long; Extensions render stored `press_on_nails`, `almond_oval`, 1.8 with whole-nail PNGs (271 × 581–773); Keep my length stored polish with 402 × 522 crops. Test rows and storage objects deleted (the user's session and the paid Day 4 render kept).
+
+**Unknowns:** what YouCam's press-on `length` means visually (1.0 = natural?) and whether it honours our transparent cut-out's shape or its own `shape`. Needs one real Extensions render.
+
+**Next step:** user tests both modes on the phone (2 units). Then DeepSeek semantics via Vercel (finish, pattern, plain vs art → Design/Colour default, shape/length cross-check).

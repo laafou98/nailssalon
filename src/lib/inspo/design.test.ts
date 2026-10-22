@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESIGN_LIMITS, designSize, nailDesign, tipDirection } from "./design";
+import { DESIGN_LIMITS, NATURAL_ASPECT, artWindow, designSize, nailDesign, tipDirection } from "./design";
 import { toLabImage } from "./oklab";
 import { nailRegion, prepareImage } from "./region";
 import { inEllipse, scene } from "./synthetic.test-helpers";
@@ -24,8 +24,34 @@ describe("designSize", () => {
     within(designSize(100, 200)); // wider than long: stretched to the minimum height
   });
 
+  it("widens short nails instead of stretching them to the minimum height", () => {
+    const s = designSize(130, 100);
+    expect(s.height).toBe(DESIGN_LIMITS.minHeight);
+    expect(s.height / s.width).toBeCloseTo(1.3, 1);
+  });
+
   it("shrinks for the 1 MB retry", () => {
     expect(designSize(1200, 600, 0.8).width).toBeLessThan(designSize(1200, 600).width);
+  });
+});
+
+describe("artWindow", () => {
+  it("keeps the whole nail for the full fit, or when it is already short", () => {
+    expect(artWindow([1, 1, 1], 60, 20, "full")).toEqual({ from: 30, to: -30 });
+    expect(artWindow([1, 1, 1], 24, 20, "natural")).toEqual({ from: 12, to: -12 });
+  });
+
+  it("slides a short-nail window to where the art is", () => {
+    // 60 long, 20 wide → a 26-long window; all the art sits in the cuticle-side quarter.
+    const profile = [...Array(36).fill(0), ...Array(12).fill(10)];
+    const w = artWindow(profile, 60, 20, "natural");
+    expect(w.from - w.to).toBeCloseTo(20 * NATURAL_ASPECT);
+    expect(w.to).toBeCloseTo(-30, 0);
+  });
+
+  it("stays centred when the art is spread evenly", () => {
+    const w = artWindow(Array(48).fill(5), 60, 20, "natural");
+    expect(Math.abs((w.from + w.to) / 2)).toBeLessThanOrEqual(60 / 48); // within one bin of the centre
   });
 });
 
@@ -78,6 +104,22 @@ describe("nailDesign", () => {
     const whiteRows = [];
     for (let y = 0; y < out.height; y++) if (at(out, out.width >> 1, y)[0] > 200) whiteRows.push(y);
     expect(Math.min(...whiteRows)).toBeGreaterThan(out.height / 2);
+  });
+
+  it("cuts natural-length art at short-nail proportions", () => {
+    const out = nailDesign(src, 1, region, 120, "#1E5A3C", { fit: "natural" });
+    expect(out.height / out.width).toBeCloseTo(NATURAL_ASPECT, 1);
+    // The window follows the white line near the tip.
+    let white = 0;
+    for (let y = 0; y < out.height; y++) if (at(out, out.width >> 1, y)[0] > 200) white++;
+    expect(white).toBeGreaterThan(0);
+  });
+
+  it("leaves outside the outline see-through for press-ons", () => {
+    const out = nailDesign(src, 1, region, 120, "#1E5A3C", { transparent: true });
+    expect(out.data[3]).toBe(0);
+    const mid = ((out.height >> 1) * out.width + (out.width >> 1)) * 4;
+    expect(out.data[mid + 3]).toBe(255);
   });
 
   it("reads from a higher-resolution copy of the photo", () => {

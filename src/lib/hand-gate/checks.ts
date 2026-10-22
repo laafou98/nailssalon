@@ -132,6 +132,19 @@ export function handBox(landmarks: Point[], width: number, height: number): Box 
 }
 
 /**
+ * A whole hand with every fingertip in the frame: what a client's own hand photo
+ * looks like. Real inspiration shots (close-ups, curled or overlapping hands)
+ * defeat the detector at its default confidence (checked on Oct 21), so this
+ * catches the client's hand photo picked as "inspiration" by mistake.
+ */
+export function showsWholeHand(hands: DetectedHand[]): boolean {
+  return hands.some((h) => FINGERTIPS.every((i) => {
+    const p = h.landmarks[i];
+    return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+  }));
+}
+
+/**
  * MediaPipe's docs say handedness assumes a mirrored (selfie) image, but on our
  * un-mirrored test photo (back of a left hand) it answered "Left" with 0.94
  * confidence, so we treat the label as the anatomical hand. Calibrated on

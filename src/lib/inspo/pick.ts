@@ -1,7 +1,8 @@
 // Tap-to-pick: one tap on an inspiration photo → that nail's outline, colours
 // and a confidence; five picks → a draft DesignSpec. Pure, so it's unit-tested.
 
-import { designSpecSchema, type DesignSpec, FINGERS, type Finger } from "@/lib/spec/types";
+import { designSpecSchema, type DesignSpec, FINGERS, type Finger, type PressOnShape } from "@/lib/spec/types";
+import { NATURAL_ASPECT, TAPER, taper } from "./design";
 import { type NailColours, nailColours } from "./colours";
 import type { LabImage } from "./oklab";
 import { type NailRegion, nailRegion, type Point, type PreparedImage } from "./region";
@@ -120,4 +121,41 @@ export function withDesigns(spec: DesignSpec, designIds: (string | null)[]): Des
     }),
   );
   return designSpecSchema.parse({ ...spec, fingers });
+}
+
+/** Tip shapes offered for extensions. YouCam names shapes tip_cuticle; we keep a natural oval cuticle. */
+export const TIP_SHAPES = ["almond", "stiletto", "oval", "square", "squoval"] as const;
+export type TipShape = (typeof TIP_SHAPES)[number];
+export const pressOnShape = (tip: TipShape): PressOnShape => `${tip}_oval`;
+
+/** Extension lengths offered (YouCam's press-on `length`, 0.8–2.15). */
+export const LENGTHS = [
+  { label: "Short", value: 1 },
+  { label: "Medium", value: 1.4 },
+  { label: "Long", value: 1.8 },
+  { label: "Extra long", value: 2.15 },
+] as const;
+
+const median = (values: number[]) => [...values].sort((a, b) => a - b)[values.length >> 1];
+
+/**
+ * Shape and length the inspiration nails seem to have: tapered ends → almond
+ * (stiletto when sharply pointed), boxy outlines → square, else oval; length from
+ * how much longer than a short natural nail they are, snapped to the offered steps.
+ */
+export function guessExtensions(picks: (NailPick | null)[], maskWidth: number): { tip: TipShape; length: number } | null {
+  const regions = picks.filter((p): p is NailPick => p !== null).map((p) => p.region);
+  if (regions.length === 0) return null;
+  const t = median(regions.map((r) => taper(r, maskWidth)));
+  const fill = median(regions.map((r) => r.fill));
+  const tip: TipShape = t < 0.45 ? "stiletto" : t < TAPER ? "almond" : fill > 0.86 ? "square" : "oval";
+  const aspect = median(regions.map((r) => r.box.length / Math.max(1, r.box.width)));
+  const wanted = aspect / NATURAL_ASPECT;
+  const length = LENGTHS.reduce((best, l) => (Math.abs(l.value - wanted) < Math.abs(best - wanted) ? l.value : best), LENGTHS[0].value as number);
+  return { tip, length };
+}
+
+/** Turns a polish design into press-on extensions with this shape and length. */
+export function asExtensions(spec: DesignSpec, tip: TipShape, length: number): DesignSpec {
+  return designSpecSchema.parse({ ...spec, effectType: "press_on_nails", shape: pressOnShape(tip), length });
 }

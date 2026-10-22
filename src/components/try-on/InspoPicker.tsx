@@ -1,8 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type LoadedInspiration, loadInspiration, nailDesignPng } from "@/lib/inspo/browser";
-import { draftSpec, type InspirationImage, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "@/lib/inspo/pick";
+import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng } from "@/lib/inspo/browser";
+import {
+  LENGTHS,
+  TIP_SHAPES,
+  type TipShape,
+  asExtensions,
+  draftSpec,
+  guessExtensions,
+  type InspirationImage,
+  type NailPick,
+  pickNail,
+  sourceFingers,
+  typicalArea,
+  withDesigns,
+} from "@/lib/inspo/pick";
 import type { Point } from "@/lib/inspo/region";
 import { type DesignSpec, FINGERS } from "@/lib/spec/types";
 
@@ -26,15 +39,18 @@ const OUTLINE: [number, number, number][] = [
 /** First-pass picks per photo, so adding a tap doesn't redo the others. */
 const firstPass = new WeakMap<InspirationImage, Map<string, NailPick | null>>();
 
-/** Cut-out PNGs per pick and orientation, so re-rendering the list doesn't redo them. */
-const cutouts = new WeakMap<NailPick, Map<boolean, Promise<Blob>>>();
+/** Cut-out PNGs per pick, orientation and length mode, so re-rendering the list doesn't redo them. */
+const cutouts = new WeakMap<NailPick, Map<string, Promise<Blob>>>();
 
-function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean): Promise<Blob> {
-  let byFlip = cutouts.get(pick);
-  if (!byFlip) cutouts.set(pick, (byFlip = new Map()));
-  if (!byFlip.has(flipped)) byFlip.set(flipped, nailDesignPng(loaded, pick, flipped));
-  return byFlip.get(flipped)!;
+function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, extensions: boolean): Promise<Blob> {
+  let byKind = cutouts.get(pick);
+  if (!byKind) cutouts.set(pick, (byKind = new Map()));
+  const key = `${flipped}/${extensions}`;
+  if (!byKind.has(key)) byKind.set(key, nailDesignPng(loaded, pick, flipped, extensions));
+  return byKind.get(key)!;
 }
+
+const TIP_LABELS: Record<TipShape, string> = { almond: "Almond", stiletto: "Stiletto", oval: "Oval", square: "Square", squoval: "Squoval" };
 
 async function uploadDesign(png: Blob): Promise<string> {
   const body = new FormData();
@@ -72,11 +88,21 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const [flipped, setFlipped] = useState<boolean[]>(FINGERS.map(() => false));
   const [previews, setPreviews] = useState<(string | null)[]>(FINGERS.map(() => null));
   const [preparing, setPreparing] = useState(false);
+  /** Extensions (press-ons at the inspiration's shape and length) instead of polish on natural nails. */
+  const [extensions, setExtensions] = useState(false);
+  /** Shape and length chosen by the user; null = use the guess from the photo. */
+  const [tip, setTip] = useState<TipShape | null>(null);
+  const [length, setLength] = useState<number | null>(null);
+  /** The chosen photo looks like the client's own hand, not a nail design. */
+  const [ownHand, setOwnHand] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const picks = useMemo(() => (loaded ? pickAll(loaded.image, taps) : []), [loaded, taps]);
   const spec = useMemo(() => (picks.length ? draftSpec([...picks, ...Array(FINGERS.length - picks.length).fill(null)]) : null), [picks]);
   const done = taps.length >= FINGERS.length;
+  const guess = useMemo(() => (loaded ? guessExtensions(picks, loaded.width) : null), [loaded, picks]);
+  const shape = tip ?? guess?.tip ?? "almond";
+  const nailLength = length ?? guess?.length ?? 1.4;
   const sources = useMemo(() => sourceFingers([...picks, ...Array(FINGERS.length - picks.length).fill(null)]), [picks]);
 
   // Cut-out previews for every picked nail.
@@ -88,7 +114,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       picks.map(async (pick, i) => {
         if (!pick) return;
         try {
-          urls[i] = URL.createObjectURL(await cutout(loaded, pick, flipped[i]));
+          urls[i] = URL.createObjectURL(await cutout(loaded, pick, flipped[i], extensions));
         } catch {
           // No preview: the swatch falls back to the colour.
         }
@@ -100,7 +126,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     return () => {
       cancelled = true;
     };
-  }, [loaded, picks, flipped]);
+  }, [loaded, picks, flipped, extensions]);
   useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews]);
 
   useEffect(() => () => { if (loaded) URL.revokeObjectURL(loaded.url); }, [loaded]);
@@ -153,6 +179,11 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       setTaps([]);
       setRedo([]);
       setFlipped(FINGERS.map(() => false));
+      setOwnHand(false);
+      setTip(null);
+      setLength(null);
+      // Checked after the photo shows, so a slow detector never delays picking.
+      looksLikeOwnHand(file).then(setOwnHand, () => setOwnHand(false));
     } catch (e) {
       setError(`Couldn't open that image (${String(e)}). Try a JPEG or PNG.`);
     } finally {
@@ -197,11 +228,12 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
         FINGERS.map((_, i) => {
           const from = sources[i];
           if (from === null || !useDesign[i] || !picks[from]) return null;
-          if (!uploads.has(from)) uploads.set(from, cutout(loaded, picks[from]!, flipped[from]).then(uploadDesign));
+          if (!uploads.has(from)) uploads.set(from, cutout(loaded, picks[from]!, flipped[from], extensions).then(uploadDesign));
           return uploads.get(from)!;
         }),
       );
-      onTryOn(withDesigns(spec, ids));
+      const designed = withDesigns(spec, ids);
+      onTryOn(extensions ? asExtensions(designed, shape, nailLength) : designed);
     } catch (e) {
       setError(`Couldn't prepare the nail designs (${e instanceof Error ? e.message : String(e)}).`);
     } finally {
@@ -214,7 +246,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   return (
     <div className="flex flex-col gap-3">
       <label className="flex cursor-pointer items-center justify-center rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-700">
-        {loading ? "Opening…" : loaded ? "Choose a different photo" : "Upload an inspiration photo"}
+        {loading ? "Opening…" : loaded ? "Choose a different photo" : "Choose the nail design you want"}
         <input
           type="file"
           accept="image/*"
@@ -223,7 +255,18 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
           onChange={(e) => choose(e.target.files?.[0])}
         />
       </label>
+      {!loaded && <p className="text-xs text-zinc-500">A photo or screenshot of the nails you&apos;d like, e.g. from Pinterest or Instagram.</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {ownHand && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-sm" role="alert">
+          <p className="flex-1">
+            This looks like a photo of your own hand, not the nail design you want. Your phone may have offered your latest photo or screenshot first: choose the inspiration picture instead.
+          </p>
+          <button onClick={() => setOwnHand(false)} className="shrink-0 text-xs underline">
+            It&apos;s right
+          </button>
+        </div>
+      )}
 
       {loaded && (
         <>
@@ -307,6 +350,55 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
           <p className="text-xs text-zinc-500">
             &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
           </p>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex rounded-full border border-zinc-300 p-1 text-sm dark:border-zinc-700" role="tablist" aria-label="Nail length">
+              {([false, true] as const).map((ext) => (
+                <button
+                  key={String(ext)}
+                  role="tab"
+                  aria-selected={extensions === ext}
+                  onClick={() => setExtensions(ext)}
+                  className={`flex-1 rounded-full px-3 py-1.5 ${extensions === ext ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : ""}`}
+                >
+                  {ext ? "Extensions" : "Keep my length"}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-zinc-500">
+              {extensions
+                ? "Press-on or gel extensions in the shape and length below (guessed from the photo)."
+                : "Polish on your own nails: the art is fitted to your nail length."}
+            </p>
+            {extensions && (
+              <>
+                <div className="flex flex-wrap gap-1.5" aria-label="Shape">
+                  {TIP_SHAPES.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setTip(t)}
+                      aria-pressed={shape === t}
+                      className={`rounded-full border px-3 py-1 text-xs ${shape === t ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
+                    >
+                      {TIP_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5" aria-label="Length">
+                  {LENGTHS.map((l) => (
+                    <button
+                      key={l.value}
+                      onClick={() => setLength(l.value)}
+                      aria-pressed={nailLength === l.value}
+                      className={`rounded-full border px-3 py-1 text-xs ${nailLength === l.value ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
 
           <button
             onClick={tryOn}
