@@ -53,10 +53,12 @@ export function rgbToHex(r: number, g: number, b: number): string {
 
 export const oklabToHex = (lab: Lab) => rgbToHex(...oklabToRgb(lab));
 
-export function hexToOklab(hex: string): Lab {
+export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
-  return rgbToOklab((n >> 16) & 255, (n >> 8) & 255, n & 255);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
+
+export const hexToOklab = (hex: string): Lab => rgbToOklab(...hexToRgb(hex));
 
 /** A whole image in OKLab, one plane per channel (the layout the region and cluster code expects). */
 export interface LabImage {

@@ -109,7 +109,7 @@ The key technique. Nail Transfer shuffles designs across fingers. We avoid that 
 ### [C] Design Compiler (server)
 1. **Colour:** done in the browser by tap-to-pick (`src/lib/inspo/colours.ts`): k-means in OKLab on each outlined nail, skipping glare and skin at the border → `baseHex`, `accentHexes`.
 2. **Semantics:** one vision-LLM call per inspiration image with the 5 crops + full image. Returns per-finger `texture`, `pattern`, `confidence`, and global `shape`/`length` estimates, as structured JSON (schema-validated with zod).
-3. **Design PNGs:** for `pattern ∈ {art, french, ombre, cat_eye}`, the crop is masked to the nail ellipse, given a transparent background and resized into Nail VTO's limits (width 271–542, height 522–1044, ≤ 1 MB) with `sharp`. Stored in `designs/`.
+3. **Design PNGs:** built in the browser (`src/lib/inspo/design.ts`): each tapped nail is cut out along its axis, tip up, outside-the-outline filled with its base colour, sized into Nail VTO's limits (width 271–542, height 522–1044, ≤ 1 MB), uploaded via `POST /api/designs/images` to `designs/<sha256>.png`. For now the user chooses Design or Colour per finger; later the vision model's `pattern` sets the default (art/french/ombre/cat_eye → design).
 4. **Confidence:** combines landmark visibility, crop sharpness, cluster separation and LLM confidence.
 
 ### [D] Render Router (server)

@@ -105,3 +105,19 @@ export function draftSpec(picks: (NailPick | null)[]): DesignSpec | null {
     confidence: Math.round((confidences.reduce((a, b) => a + b, 0) / FINGERS.length) * 100) / 100,
   });
 }
+
+/**
+ * Switches fingers to their cut-out artwork: `designIds[i]` is the stored design
+ * PNG for finger i (thumb → pinky), or null to keep it a plain colour. The base
+ * colour stays, for polish matching and the recipe card.
+ */
+export function withDesigns(spec: DesignSpec, designIds: (string | null)[]): DesignSpec {
+  const fingers = Object.fromEntries(
+    FINGERS.map((finger, i) => {
+      const f = spec.fingers[finger];
+      const id = designIds[i];
+      return [finger, id ? { ...f, kind: "design", pattern: "art", designImageId: id } : f];
+    }),
+  );
+  return designSpecSchema.parse({ ...spec, fingers });
+}

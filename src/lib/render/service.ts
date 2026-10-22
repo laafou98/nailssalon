@@ -65,6 +65,7 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
   if (!hand || hand.kind !== "hand" || hand.session_id !== sessionId) {
     throw new RenderError("Hand photo not found", 404);
   }
+  const designPaths = await designImagePaths(sessionId, spec);
 
   // 1. Cache.
   const cacheKey = renderCacheKey(spec, hand.sha256);
@@ -110,7 +111,7 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
 
   // 3. YouCam task, with short-lived signed URLs for the inputs.
   try {
-    const payload = toNailVtoPayload(spec, await signedUrl(hand.path), await designUrls(spec));
+    const payload = toNailVtoPayload(spec, await signedUrl(hand.path), await signAll(designPaths));
     const taskId = await createTask(ENGINE, payload);
     await db.from("renders").update({ status: "running", youcam_task_id: taskId }).eq("id", render.id);
     return { id: render.id, status: "running" };
@@ -121,12 +122,23 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
   }
 }
 
-/** Signed URLs for every design finger's PNG, keyed by image id. */
-async function designUrls(spec: DesignSpec): Promise<Record<string, string>> {
+/** Storage paths of every design finger's PNG, keyed by image id. Each must be this session's own design image. */
+async function designImagePaths(sessionId: string, spec: DesignSpec): Promise<Record<string, string>> {
   const ids = [...new Set(Object.values(spec.fingers).flatMap((f) => (f.designImageId ? [f.designImageId] : [])))];
   if (ids.length === 0) return {};
-  const { data } = await supabaseAdmin().from("images").select("id, path").in("id", ids);
-  return Object.fromEntries(await Promise.all((data ?? []).map(async (r) => [r.id, await signedUrl(r.path)])));
+  const { data } = await supabaseAdmin()
+    .from("images")
+    .select("id, path")
+    .in("id", ids)
+    .eq("session_id", sessionId)
+    .eq("kind", "design");
+  if ((data ?? []).length !== ids.length) throw new RenderError("Design image not found", 404);
+  return Object.fromEntries(data!.map((r) => [r.id, r.path]));
+}
+
+/** Short-lived signed URLs for YouCam, same keys. */
+async function signAll(paths: Record<string, string>): Promise<Record<string, string>> {
+  return Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([id, path]) => [id, await signedUrl(path)])));
 }
 
 /** Marks a render failed and refunds its unit, exactly once (only the caller that flips the status refunds). */

@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type LoadedInspiration, loadInspiration } from "@/lib/inspo/browser";
-import { draftSpec, type InspirationImage, type NailPick, pickNail, typicalArea } from "@/lib/inspo/pick";
+import { type LoadedInspiration, loadInspiration, nailDesignPng } from "@/lib/inspo/browser";
+import { draftSpec, type InspirationImage, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "@/lib/inspo/pick";
 import type { Point } from "@/lib/inspo/region";
 import { type DesignSpec, FINGERS } from "@/lib/spec/types";
 
 /**
  * Tap-to-pick: upload an inspiration photo, tap its nails thumb → pinky (or
  * skip a finger that isn't visible), see each outline and its colours, then
- * try the per-finger design on. Everything runs on the device.
+ * try the per-finger design on. Each finger copies the nail's artwork (a
+ * cut-out PNG) or just its colour. Everything but the upload runs on the device.
  */
 
 const LABELS = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
@@ -24,6 +25,25 @@ const OUTLINE: [number, number, number][] = [
 
 /** First-pass picks per photo, so adding a tap doesn't redo the others. */
 const firstPass = new WeakMap<InspirationImage, Map<string, NailPick | null>>();
+
+/** Cut-out PNGs per pick and orientation, so re-rendering the list doesn't redo them. */
+const cutouts = new WeakMap<NailPick, Map<boolean, Promise<Blob>>>();
+
+function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean): Promise<Blob> {
+  let byFlip = cutouts.get(pick);
+  if (!byFlip) cutouts.set(pick, (byFlip = new Map()));
+  if (!byFlip.has(flipped)) byFlip.set(flipped, nailDesignPng(loaded, pick, flipped));
+  return byFlip.get(flipped)!;
+}
+
+async function uploadDesign(png: Blob): Promise<string> {
+  const body = new FormData();
+  body.set("design", png, "design.png");
+  const res = await fetch("/api/designs/images", { method: "POST", body });
+  const json = (await res.json().catch(() => ({}))) as { imageId?: string; error?: string };
+  if (!res.ok || !json.imageId) throw new Error(json.error ?? `Server error (${res.status})`);
+  return json.imageId;
+}
 
 function pickAll(image: InspirationImage, taps: (Point | null)[]): (NailPick | null)[] {
   let cache = firstPass.get(image);
@@ -46,11 +66,42 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   /** One entry per finger so far: a tap, or null for a skipped finger. */
   const [taps, setTaps] = useState<(Point | null)[]>([]);
   const [redo, setRedo] = useState<(Point | null)[]>([]);
+  /** Per finger: copy the artwork (true) or only the colour. */
+  const [useDesign, setUseDesign] = useState<boolean[]>(FINGERS.map(() => true));
+  /** Per picked finger: the cut-out's tip was guessed the wrong way round. */
+  const [flipped, setFlipped] = useState<boolean[]>(FINGERS.map(() => false));
+  const [previews, setPreviews] = useState<(string | null)[]>(FINGERS.map(() => null));
+  const [preparing, setPreparing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const picks = useMemo(() => (loaded ? pickAll(loaded.image, taps) : []), [loaded, taps]);
   const spec = useMemo(() => (picks.length ? draftSpec([...picks, ...Array(FINGERS.length - picks.length).fill(null)]) : null), [picks]);
   const done = taps.length >= FINGERS.length;
+  const sources = useMemo(() => sourceFingers([...picks, ...Array(FINGERS.length - picks.length).fill(null)]), [picks]);
+
+  // Cut-out previews for every picked nail.
+  useEffect(() => {
+    if (!loaded) return;
+    let cancelled = false;
+    const urls: (string | null)[] = FINGERS.map(() => null);
+    Promise.all(
+      picks.map(async (pick, i) => {
+        if (!pick) return;
+        try {
+          urls[i] = URL.createObjectURL(await cutout(loaded, pick, flipped[i]));
+        } catch {
+          // No preview: the swatch falls back to the colour.
+        }
+      }),
+    ).then(() => {
+      if (cancelled) urls.forEach((u) => u && URL.revokeObjectURL(u));
+      else setPreviews(urls);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, picks, flipped]);
+  useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews]);
 
   useEffect(() => () => { if (loaded) URL.revokeObjectURL(loaded.url); }, [loaded]);
 
@@ -101,6 +152,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       setLoaded(next);
       setTaps([]);
       setRedo([]);
+      setFlipped(FINGERS.map(() => false));
     } catch (e) {
       setError(`Couldn't open that image (${String(e)}). Try a JPEG or PNG.`);
     } finally {
@@ -130,6 +182,31 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const redoTap = () => {
     setTaps([...taps, redo[0]]);
     setRedo(redo.slice(1));
+  };
+
+  const toggle = (list: boolean[], i: number) => list.map((v, k) => (k === i ? !v : v));
+
+  /** Uploads the cut-outs the design fingers need (once per picked nail), then renders. */
+  const tryOn = async () => {
+    if (!spec || !loaded) return;
+    setPreparing(true);
+    setError(null);
+    try {
+      const uploads = new Map<number, Promise<string>>();
+      const ids = await Promise.all(
+        FINGERS.map((_, i) => {
+          const from = sources[i];
+          if (from === null || !useDesign[i] || !picks[from]) return null;
+          if (!uploads.has(from)) uploads.set(from, cutout(loaded, picks[from]!, flipped[from]).then(uploadDesign));
+          return uploads.get(from)!;
+        }),
+      );
+      onTryOn(withDesigns(spec, ids));
+    } catch (e) {
+      setError(`Couldn't prepare the nail designs (${e instanceof Error ? e.message : String(e)}).`);
+    } finally {
+      setPreparing(false);
+    }
   };
 
   const failed = taps.length > 0 && taps[taps.length - 1] !== null && picks[taps.length - 1] === null;
@@ -181,35 +258,62 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
           </div>
           <p className="text-xs text-zinc-500">Only some nails visible? Skip a finger, or tap the same nail again to reuse it.</p>
 
-          <ul className="grid grid-cols-5 gap-1" aria-label="Colours per finger">
+          <ul className="grid grid-cols-5 gap-1" aria-label="Design per finger">
             {FINGERS.map((finger, i) => {
               const f = spec?.fingers[finger];
               const picked = Boolean(picks[i]);
+              const from = sources[i];
+              const preview = from !== null ? previews[from] : null;
+              const showDesign = useDesign[i] && preview;
               return (
-                <li key={finger} className="flex flex-col items-center gap-1 text-center" data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")}>
-                  <div
-                    className={`relative h-10 w-10 rounded-full border ${picked ? "border-zinc-400" : "border-dashed border-zinc-400 opacity-60"}`}
-                    style={{ backgroundColor: f?.baseHex ?? "transparent" }}
-                  >
-                    {f?.accentHexes.slice(0, 2).map((hex, k) => (
-                      <span key={k} className="absolute h-3.5 w-3.5 rounded-full border border-white/70" style={{ backgroundColor: hex, right: -2 - k * 8, bottom: -2 }} />
-                    ))}
+                <li key={finger} className="flex flex-col items-center gap-1 text-center" data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined}>
+                  <div className="relative flex h-14 items-center">
+                    {showDesign ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- local blob URL
+                      <img src={preview} alt={`${LABELS[i]} nail design`} className={`h-14 w-7 rounded-full border object-cover ${picked ? "border-zinc-400" : "border-dashed border-zinc-400 opacity-60"}`} />
+                    ) : (
+                      <div
+                        className={`relative h-10 w-10 rounded-full border ${picked ? "border-zinc-400" : "border-dashed border-zinc-400 opacity-60"}`}
+                        style={{ backgroundColor: f?.baseHex ?? "transparent" }}
+                      >
+                        {f?.accentHexes.slice(0, 2).map((hex, k) => (
+                          <span key={k} className="absolute h-3.5 w-3.5 rounded-full border border-white/70" style={{ backgroundColor: hex, right: -2 - k * 8, bottom: -2 }} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <span className="text-[11px] leading-tight">{LABELS[i]}</span>
                   <span className="text-[10px] leading-tight text-zinc-500">
                     {!f ? "–" : !picked ? "copied" : f.confidence < 0.6 ? "unsure" : ""}
                   </span>
+                  {f && (
+                    <button
+                      onClick={() => setUseDesign(toggle(useDesign, i))}
+                      aria-pressed={useDesign[i]}
+                      className="rounded-full border border-zinc-300 px-2 py-0.5 text-[10px] dark:border-zinc-700"
+                    >
+                      {useDesign[i] ? "Design" : "Colour"}
+                    </button>
+                  )}
+                  {f && picked && useDesign[i] && (
+                    <button onClick={() => setFlipped(toggle(flipped, i))} className="text-[10px] text-zinc-500 underline" aria-label={`Turn the ${LABELS[i].toLowerCase()} design upside down`}>
+                      Flip
+                    </button>
+                  )}
                 </li>
               );
             })}
           </ul>
+          <p className="text-xs text-zinc-500">
+            &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
+          </p>
 
           <button
-            onClick={() => spec && onTryOn(spec)}
-            disabled={!spec || busy}
+            onClick={tryOn}
+            disabled={!spec || busy || preparing}
             className="rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
           >
-            {busy ? "Rendering…" : done ? "Try this on my hand" : "Try this on my hand (missing fingers copy the nearest)"}
+            {preparing ? "Preparing designs…" : busy ? "Rendering…" : done ? "Try this on my hand" : "Try this on my hand (missing fingers copy the nearest)"}
           </button>
         </>
       )}

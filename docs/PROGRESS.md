@@ -5,14 +5,15 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 4 of 12 done (Oct 21, 2026, three days early). Tap-to-pick on inspiration photos + OKLab colour clustering works on `/hand` ("Use an inspiration photo"). **Next:** Day 5, DeepSeek semantics (finish/pattern per finger) + design PNGs.
+- **Day:** 5 of 12 in progress (Oct 22, 2026). Tap-to-pick now copies each nail's **artwork** (design PNG → Nail VTO `sub_type: "design"`), not just its colour; verified with the mock only. **Next:** one real design render (1 unit) on the user's phone, then DeepSeek semantics (finish/pattern per finger, which nails are plain) and the Transfer fallback.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
-- **Phone test of tap-to-pick** (Day 4) by the user: not done yet.
+- **First real design render** (Day 5): the user tries "Design" fingers on their phone (1 unit). Check that YouCam keeps the art's orientation (we send tip up) and how much fine detail survives.
+- **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
 - **Render realism, decision pending (user):** build the "true-colour composite" (exact requested hue + photo grain on YouCam's mask; `scripts/prototypes/true_colour_composite.py`) into the pipeline, or fold it into Day 7 colour matching. Cream looks decent on the phone; Chrome looks cheap (streaks, coral → red).
 - **Camera:** confirm on the phone whether the accepted photo says "camera photo" (full-res ImageCapture) or "video frame".
 - **Known limits:** tap-to-pick tuned on 3 photos only (half-hidden thumbs can leak into look-alike backgrounds; chrome outlines aren't accents). Side-on thumbs still get painted by YouCam.
@@ -28,7 +29,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
-| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | |
+| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Design PNGs done (Oct 22); DeepSeek + Transfer fallback next |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
@@ -177,3 +178,25 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 
 **Next step:** user tests tap-to-pick on their phone. Then Day 5: DeepSeek semantics (texture, pattern, confidence per finger) via Vercel, and design PNGs for art nails.
 
+
+### Session 3, Oct 22, 2026: Day 5 started, design PNGs
+**Trigger:** the user tested tap-to-pick on their phone: colours came through, the nail art (moons, stars, leaves) didn't. As built on Day 4, every finger went to YouCam as a plain colour.
+
+**YouCam's design-image rules** (docs.perfectcorp.com/reference/ai_nail_vto): PNG, width 271–542, height 522–1044, ≤ 1 MB, ≥ 72 ppi, "applied from the center". Transparency and orientation aren't specified for nail polish; YouCam's press-on sample is one upright nail filling the frame.
+
+**Built** (0 YouCam units)
+- `src/lib/inspo/design.ts`: `nailDesign` cuts one tapped nail out of the photo along its principal axis, tip at the top, reading from a full-resolution copy (≤ 3000 px long side) and blending the outline edge softly. Everything outside the outline (eroded by one working pixel) is filled with the nail's base colour, so skin or background never lands on the client's nail. `designSize` keeps proportions within YouCam's limits; `tipDirection`: the narrower end is the tip (almond/stiletto, when one end holds < 80% of the other's outline), else "fingers point up the photo". 8 tests.
+- `src/lib/inspo/browser.ts`: `nailDesignPng` encodes the cut-out as a PNG, shrinking until it is under 1 MB.
+- `POST /api/designs/images` + `src/lib/render/design-upload.ts`: validates a real PNG within the limits (size read from IHDR), stores it content-addressed at `designs/<sha256>.png` as a `design` image of the session. 3 tests.
+- `src/lib/render/service.ts`: design image ids in a spec must belong to the session (checked **before** a unit is reserved).
+- `pick.ts`: `withDesigns(spec, ids)` turns fingers into `kind: "design"`, `pattern: "art"`, keeping `baseHex` for polish matching. 1 test.
+- Picker UI: each finger shows its cut-out; a "Design / Colour" switch per finger (default Design) and "Flip" when the tip guess is wrong. "Try this on my hand" uploads one PNG per picked nail (skipped fingers reuse their source's), then renders.
+
+**Verified** with `dev-mock` at phone size on inspo-7 (thumb skipped): cut-outs show the white swirls and the cream nail's green lines; the tip rule points the right way on all four sideways nails (checked offline with sharp). 4 PNGs uploaded (271 × 581–773), render spec had all five fingers as `design` (thumb sharing index's image), mock render succeeded. Test rows (render, design, ledger row 9, 5 images) and storage objects were deleted; the user's phone session and the paid Day 4 render were left alone. 73 tests, typecheck, lint, build pass.
+
+**Known limits**
+- Inspiration nails are long; YouCam stretches the cut-out over the client's (shorter) nail, so art gets squashed. Cropping to the client's nail proportions is a possible fix after seeing a real render.
+- Outline edges come from the 512 px working image: a thin dark rim of shadow can stay at the nail's edge.
+- Plain nails also default to Design (shading baked in). DeepSeek (next) should pick Colour for plain nails.
+
+**Next step:** user pushes and renders a design on their phone (1 unit). Then DeepSeek semantics via Vercel.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toLabImage } from "./oklab";
-import { draftSpec, type NailPick, pickNail, sourceFingers, typicalArea } from "./pick";
+import { draftSpec, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "./pick";
 import { prepareImage } from "./region";
 import { inEllipse, noise, scene } from "./synthetic.test-helpers";
 
@@ -57,5 +57,16 @@ describe("typicalArea", () => {
   it("is the median area of the picks", () => {
     expect(typicalArea([null, null])).toBeUndefined();
     expect(typicalArea([fake("#000000", 1, [], 100), null, fake("#000000", 1, [], 900), fake("#000000", 1, [], 300)])).toBe(300);
+  });
+});
+
+describe("withDesigns", () => {
+  it("turns chosen fingers into design fingers and leaves the rest as colours", () => {
+    const spec = draftSpec([fake("#112233"), fake("#223344"), fake("#334455"), fake("#445566"), fake("#556677")])!;
+    const id = "0b9c3f0e-5d1a-4c6e-9a3b-2f1d8e7c6b5a";
+    const out = withDesigns(spec, [id, null, id, null, null]);
+    expect(out.fingers.thumb).toMatchObject({ kind: "design", pattern: "art", designImageId: id, baseHex: "#112233" });
+    expect(out.fingers.index.kind).toBe("color");
+    expect(out.fingers.middle.designImageId).toBe(id);
   });
 });
