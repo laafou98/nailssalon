@@ -2,7 +2,8 @@
 // turned upright (tip at the top) and sized for Nail VTO's `sub_type: "design"`.
 // Two fits: "natural" (polish on the client's own, usually shorter, nails: the
 // busiest stretch of the art at short-nail proportions, so it isn't squashed) and
-// "full" (press-on extensions: the whole nail on a transparent background).
+// "full" (press-on extensions: the whole nail, drawn into a clean nail silhouette
+// on a transparent background, because YouCam uses the PNG's outline as the nail).
 // Pure, so it's unit-tested; the browser turns the result into a PNG.
 
 import { hexToRgb } from "./oklab";
@@ -23,6 +24,32 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 export const NATURAL_ASPECT = 1.3;
 
 export type DesignFit = "natural" | "full";
+
+/** Tip shapes for extensions. YouCam names its press-on shapes tip_cuticle. */
+export const TIP_SHAPES = ["almond", "stiletto", "oval", "square", "squoval"] as const;
+export type TipShape = (typeof TIP_SHAPES)[number];
+
+/**
+ * Half-width (0–1) of a nail silhouette at `t` (0 = tip, 1 = cuticle), with a
+ * rounded oval cuticle. Our cut-out's own outline is too ragged to send as the
+ * shape of an extension (it showed as torn edges on Oct 22).
+ */
+export function silhouetteHalfWidth(tip: TipShape, t: number): number {
+  if (t < 0 || t > 1) return 0;
+  if (t > 0.85) return Math.sqrt(Math.max(0, 1 - ((t - 0.85) / 0.15) ** 2)); // oval cuticle
+  switch (tip) {
+    case "stiletto": // straight sides to a sharp point
+      return t < 0.55 ? 0.04 + 0.96 * (t / 0.55) : 1;
+    case "almond": // tapered, softly rounded point
+      return t < 0.5 ? Math.sqrt(1 - (1 - t / 0.5) ** 2) : 1;
+    case "oval":
+      return t < 0.3 ? Math.sqrt(1 - (1 - t / 0.3) ** 2) : 1;
+    case "squoval": // square with softened corners
+      return t < 0.1 ? Math.pow(1 - (1 - t / 0.1) ** 4, 0.25) : 1;
+    case "square":
+      return t < 0.03 ? Math.sqrt(1 - (1 - t / 0.03) ** 2) : 1;
+  }
+}
 
 /**
  * Output size for a nail `length` × `width` source pixels: keeps its proportions
@@ -136,7 +163,8 @@ export function artWindow(
  * @param maskWidth width of the working image (the region's mask is maskWidth × n).
  * @param fillHex  colour for everything outside the outline (the nail's base colour), so
  *                 skin or background caught in the box never ends up on the client's nail.
- *                 With `transparent` (press-on), outside the outline is see-through instead.
+ *                 With `silhouette` (press-on), the result is cut to that clean nail shape
+ *                 on a transparent background instead.
  */
 export function nailDesign(
   src: RgbaImage,
@@ -144,7 +172,7 @@ export function nailDesign(
   region: NailRegion,
   maskWidth: number,
   fillHex: string,
-  options: { flipped?: boolean; shrink?: number; fit?: DesignFit; transparent?: boolean } = {},
+  options: { flipped?: boolean; shrink?: number; fit?: DesignFit; silhouette?: TipShape } = {},
 ): RgbaImage {
   const { box } = region;
   const maskHeight = region.mask.length / maskWidth;
@@ -182,12 +210,13 @@ export function nailDesign(
     const along = from - ((v + 0.5) / out.height) * (from - to);
     for (let u = 0; u < out.width; u++) {
       const [sr, sg, sb, inside] = at(along, ((u + 0.5) / out.width - 0.5) * box.width);
-      const o = (v * out.width + u) * 4;
-      if (options.transparent) {
-        data.set([sr, sg, sb, Math.round(inside * 255)], o);
-      } else {
-        data.set([sr * inside + fr * (1 - inside), sg * inside + fg * (1 - inside), sb * inside + fb * (1 - inside), 255], o);
+      let alpha = 255;
+      if (options.silhouette) {
+        // Distance inside the silhouette's edge in output pixels, anti-aliased over ~1.5 px.
+        const half = silhouetteHalfWidth(options.silhouette, (v + 0.5) / out.height) * (out.width / 2);
+        alpha = Math.round(clamp((half - Math.abs(u + 0.5 - out.width / 2)) / 1.5 + 0.5, 0, 1) * 255);
       }
+      data.set([sr * inside + fr * (1 - inside), sg * inside + fg * (1 - inside), sb * inside + fb * (1 - inside), alpha], (v * out.width + u) * 4);
     }
   }
   return { data, ...out };

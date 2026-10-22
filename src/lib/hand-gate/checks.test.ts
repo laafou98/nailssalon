@@ -7,6 +7,7 @@ import {
   cropForHand,
   evaluateHands,
   facingSide,
+  fingersCurled,
   outputSize,
   showsWholeHand,
 } from "./checks";
@@ -64,11 +65,27 @@ describe("evaluateHands", () => {
 
     const report = evaluateHands([hand({ landmarks: mirrored })], 1000, 1000, GOOD_PIXELS);
     expect(statusOf(report, "orientation")).toBe("fail");
-    expect(report.headline).toMatch(/back/i);
+    expect(report.headline).toMatch(/turn your hand over/i);
     // The live guide must show the palm side, not "flat ✓", even though the pose is flat.
     expect(report.pose).toMatchObject({ status: "pass", facing: "palm" });
     expect(report.autoCapture).toBe(false);
     expect(evaluateHands([hand()], 1000, 1000, GOOD_PIXELS).pose?.facing).toBe("back");
+  });
+
+  it("accepts a palm-side hand with the fingers curled so the nails face the camera", () => {
+    const mirrored = RIGHT_HAND_BACK.map((p) => ({ ...p, x: 1 - p.x }));
+    // Fold each finger: its joints and tip pulled in to 30% of their distance from the knuckle.
+    const knuckle = (i: number) => i - ((i - 1) % 4);
+    const curled = mirrored.map((p, i) =>
+      i < 5 || knuckle(i) === i ? p : { x: mirrored[knuckle(i)].x + (p.x - mirrored[knuckle(i)].x) * 0.3, y: mirrored[knuckle(i)].y + (p.y - mirrored[knuckle(i)].y) * 0.3 },
+    );
+    expect(fingersCurled(hand({ landmarks: mirrored }), 1000, 1000)).toBe(false);
+    expect(fingersCurled(hand({ landmarks: curled }), 1000, 1000)).toBe(true);
+    const report = evaluateHands([hand({ landmarks: curled })], 1000, 1000, GOOD_PIXELS);
+    expect(statusOf(report, "orientation")).toBe("pass");
+    expect(report.pose?.facing).toBe("curled");
+    // A flat palm is still refused.
+    expect(statusOf(evaluateHands([hand({ landmarks: mirrored })], 1000, 1000, GOOD_PIXELS), "orientation")).toBe("fail");
   });
 
   it("is rotation-invariant (hand held sideways)", () => {

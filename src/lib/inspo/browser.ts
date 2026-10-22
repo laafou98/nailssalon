@@ -4,7 +4,7 @@
 
 import { analyze, loadLandmarker } from "@/lib/hand-gate/browser";
 import { showsWholeHand } from "@/lib/hand-gate/checks";
-import { DESIGN_LIMITS, nailDesign, type RgbaImage } from "./design";
+import { DESIGN_LIMITS, nailDesign, type RgbaImage, type TipShape } from "./design";
 import { toLabImage } from "./oklab";
 import type { InspirationImage, NailPick } from "./pick";
 import { prepareImage } from "./region";
@@ -45,10 +45,11 @@ const sources = new WeakMap<Blob, RgbaImage>();
 /**
  * One nail's artwork as a PNG for Nail VTO (`sub_type: "design"`): cut out of the
  * full-resolution photo, tip up, inside YouCam's size limits and under 1 MB.
- * Polish on natural nails gets the short-nail window; extensions get the whole
- * nail on a transparent background (YouCam's press-on rule).
+ * Polish on natural nails gets the short-nail window; extensions (`extensions` =
+ * their tip shape) get the whole nail in a clean silhouette on a transparent
+ * background (YouCam's press-on rule).
  */
-export async function nailDesignPng(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, extensions: boolean): Promise<Blob> {
+export async function nailDesignPng(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, extensions: TipShape | null): Promise<Blob> {
   const src = sources.get(loaded.file);
   if (!src) throw new Error("Photo pixels are gone; choose the photo again");
   const scale = src.width / loaded.width;
@@ -57,7 +58,7 @@ export async function nailDesignPng(loaded: LoadedInspiration, pick: NailPick, f
       flipped,
       shrink,
       fit: extensions ? "full" : "natural",
-      transparent: extensions,
+      silhouette: extensions ?? undefined,
     });
     const canvas = document.createElement("canvas");
     canvas.width = img.width;

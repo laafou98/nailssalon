@@ -71,8 +71,12 @@ export interface HandPose {
   farSide: "thumb" | "pinky";
   /** Whether that far edge is on the right of the (un-mirrored) image. */
   farEdgeOnRight: boolean;
-  /** Which side faces the camera; "unsure" while edge-on or when handedness is low-confidence. */
-  facing: "back" | "palm" | "unsure";
+  /**
+   * Which side faces the camera; "unsure" while edge-on or when handedness is
+   * low-confidence. "curled": palm towards the camera but fingers folded so the
+   * nails face it (the usual way people photograph their nails).
+   */
+  facing: "back" | "palm" | "curled" | "unsure";
   status: CheckStatus;
 }
 
@@ -111,6 +115,11 @@ export const THRESHOLDS = {
   // measured 0.70 in live video (0.75–0.81 as stills); the edge-on phone photo
   // that slipped through on Oct 21 measured 0.28 (≈ 67°).
   knuckleRatioFlat: 0.72,
+  // Fingertip-to-knuckle length over palm length, averaged over index–pinky:
+  // about 0.95 for straight fingers (the synthetic test hand: 0.94). Below this the
+  // fingers are folded towards the camera and their nails face it. Set from
+  // geometry, not yet measured on a real curled-hand photo.
+  curledFingerRatio: 0.6,
   posePassDeg: 30, // auto-capture only at or below this turn
   poseFailDeg: 45, // block the photo above this
   cropPadding: 0.12,
@@ -167,6 +176,19 @@ export function facingSide(hand: DetectedHand): "back" | "palm" {
   const cross = (i.x - w.x) * (p.y - w.y) - (i.y - w.y) * (p.x - w.x);
   const rightHandBack = cross > 0;
   return (anatomicalHand(hand.handedness) === "right") === rightHandBack ? "back" : "palm";
+}
+
+/**
+ * Fingers folded towards the camera: seen from the palm side, the fingertips sit
+ * close to their knuckles on screen, and the nails face the camera.
+ */
+export function fingersCurled(hand: DetectedHand, width: number, height: number): boolean {
+  const lm = hand.landmarks;
+  const dist = (a: number, b: number) => Math.hypot((lm[a].x - lm[b].x) * width, (lm[a].y - lm[b].y) * height);
+  const palm = dist(WRIST, 9) || 1;
+  const fingers = [[8, INDEX_MCP], [12, 9], [16, 13], [20, PINKY_MCP]] as const;
+  const ratio = fingers.reduce((sum, [tip, mcp]) => sum + dist(tip, mcp), 0) / fingers.length / palm;
+  return ratio < THRESHOLDS.curledFingerRatio;
 }
 
 /**
@@ -278,9 +300,12 @@ export function evaluateHands(
     // Nothing to say yet: the pose message already tells the user what to do.
   } else if (hand.handednessScore < THRESHOLDS.handednessMinScore) {
     add("orientation", "warn", "Make sure the back of your hand faces the camera");
+  } else if (facingSide(hand) === "palm" && fingersCurled(hand, width, height)) {
+    pose.facing = "curled";
+    add("orientation", "pass", "Fingers curled, nails facing the camera");
   } else if (facingSide(hand) === "palm") {
     pose.facing = "palm";
-    add("orientation", "fail", "Turn your hand over: show the back, with your nails");
+    add("orientation", "fail", "Turn your hand over, or curl your fingers so your nails face the camera");
   } else {
     pose.facing = "back";
     add("orientation", "pass", "Back of hand facing the camera");

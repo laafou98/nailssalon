@@ -2,7 +2,7 @@
 // and a confidence; five picks → a draft DesignSpec. Pure, so it's unit-tested.
 
 import { designSpecSchema, type DesignSpec, FINGERS, type Finger, type PressOnShape } from "@/lib/spec/types";
-import { NATURAL_ASPECT, TAPER, taper } from "./design";
+import { NATURAL_ASPECT, TAPER, type TipShape, taper } from "./design";
 import { type NailColours, nailColours } from "./colours";
 import type { LabImage } from "./oklab";
 import { type NailRegion, nailRegion, type Point, type PreparedImage } from "./region";
@@ -123,9 +123,9 @@ export function withDesigns(spec: DesignSpec, designIds: (string | null)[]): Des
   return designSpecSchema.parse({ ...spec, fingers });
 }
 
-/** Tip shapes offered for extensions. YouCam names shapes tip_cuticle; we keep a natural oval cuticle. */
-export const TIP_SHAPES = ["almond", "stiletto", "oval", "square", "squoval"] as const;
-export type TipShape = (typeof TIP_SHAPES)[number];
+export { TIP_SHAPES, type TipShape } from "./design";
+
+/** YouCam press-on shape for a tip shape: we keep a natural oval cuticle. */
 export const pressOnShape = (tip: TipShape): PressOnShape => `${tip}_oval`;
 
 /** Extension lengths offered (YouCam's press-on `length`, 0.8–2.15). */

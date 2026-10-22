@@ -42,7 +42,8 @@ const firstPass = new WeakMap<InspirationImage, Map<string, NailPick | null>>();
 /** Cut-out PNGs per pick, orientation and length mode, so re-rendering the list doesn't redo them. */
 const cutouts = new WeakMap<NailPick, Map<string, Promise<Blob>>>();
 
-function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, extensions: boolean): Promise<Blob> {
+/** `extensions`: the extension's tip shape, or null for polish on natural nails. */
+function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, extensions: TipShape | null): Promise<Blob> {
   let byKind = cutouts.get(pick);
   if (!byKind) cutouts.set(pick, (byKind = new Map()));
   const key = `${flipped}/${extensions}`;
@@ -114,7 +115,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       picks.map(async (pick, i) => {
         if (!pick) return;
         try {
-          urls[i] = URL.createObjectURL(await cutout(loaded, pick, flipped[i], extensions));
+          urls[i] = URL.createObjectURL(await cutout(loaded, pick, flipped[i], extensions ? shape : null));
         } catch {
           // No preview: the swatch falls back to the colour.
         }
@@ -126,7 +127,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     return () => {
       cancelled = true;
     };
-  }, [loaded, picks, flipped, extensions]);
+  }, [loaded, picks, flipped, extensions, shape]);
   useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews]);
 
   useEffect(() => () => { if (loaded) URL.revokeObjectURL(loaded.url); }, [loaded]);
@@ -228,7 +229,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
         FINGERS.map((_, i) => {
           const from = sources[i];
           if (from === null || !useDesign[i] || !picks[from]) return null;
-          if (!uploads.has(from)) uploads.set(from, cutout(loaded, picks[from]!, flipped[from], extensions).then(uploadDesign));
+          if (!uploads.has(from)) uploads.set(from, cutout(loaded, picks[from]!, flipped[from], extensions ? shape : null).then(uploadDesign));
           return uploads.get(from)!;
         }),
       );

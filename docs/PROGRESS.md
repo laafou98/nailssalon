@@ -12,6 +12,8 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
+- **Curled-fingers hand pose** (Oct 22): now accepted by the gate (palm side + fingertips folded near their knuckles). Rule set from geometry; confirm live on the phone (free), then one real render to see if YouCam handles it.
+- **Nail outlining is the weak link** (Oct 22): pale glitter nails on pale skin/background lose their rims or fail; half-hidden thumbs fail. Proposal: SlimSAM (tap → segment) in the browser, ≈ 14 MB quantized ONNX, self-hosted. Waiting on the user's go-ahead.
 - **Real renders of both length modes** (Day 5): "Keep my length" with the short-nail crop, and "Extensions" (press-on: never rendered for real yet). Check what YouCam's `length` 1.0–2.15 actually looks like and adjust the Short/Medium/Long/Extra long steps.
 - **Product decision (user, Oct 22):** natural length is a feature, not a bug. Keep both modes; "Extensions" is a different salon service and price (feeds the Day 7 quote and the recipe card).
 - **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
@@ -219,3 +221,12 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 **Unknowns:** what YouCam's press-on `length` means visually (1.0 = natural?) and whether it honours our transparent cut-out's shape or its own `shape`. Needs one real Extensions render.
 
 **Next step:** user tests both modes on the phone (2 units). Then DeepSeek semantics via Vercel (finish, pattern, plain vs art → Design/Colour default, shape/length cross-check).
+
+### Session 3 (cont.), Oct 22, 2026: curled-hand pose, clean extension silhouettes
+**Phone test (1 unit, total ~8):** the user's Extensions render (almond, Extra long 2.15, green glitter photo). Index/middle/ring cut-outs were good (glitter stripes visible); thumb (a dark blob) and pinky (a smudge) were bad outlines. **YouCam uses the press-on PNG's alpha as the nail shape**, so ragged outlines rendered as torn nails. Also: the gate refused the curled-fingers pose ("palm side"), which is how most nail photos are taken.
+
+**Built** (0 units)
+- `fingersCurled` (`checks.ts`): mean fingertip-to-knuckle length / palm length over index–pinky < 0.6 (straight fingers ≈ 0.95). A palm-side hand with curled fingers passes ("Fingers curled, nails facing the camera", `pose.facing = "curled"`); a flat palm is still refused with "Turn your hand over, or curl your fingers so your nails face the camera". MediaPipe found no hand in the user's screenshot (591 px, overlay drawn on it), so the threshold is from geometry only. 1 test.
+- Extensions are drawn into a clean silhouette per tip shape (`silhouetteHalfWidth`: almond, stiletto, oval, square, squoval; rounded oval cuticle; 1.5 px anti-aliasing), filled with the cut-out (base colour where the outline missed). Changing the shape redraws the previews. 2 tests (86 total).
+
+**Outline diagnosis** on a crop of the user's screenshot of the glitter photo: middle/ring/pinky outlines cover the nail centres but miss the pale mint rims; the half-hidden thumb is a few pixels. Colour-distance flooding can't separate pale glitter from pale skin and a white wall. See the SlimSAM proposal in open items.

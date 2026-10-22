@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESIGN_LIMITS, NATURAL_ASPECT, artWindow, designSize, nailDesign, tipDirection } from "./design";
+import { DESIGN_LIMITS, NATURAL_ASPECT, TIP_SHAPES, artWindow, designSize, nailDesign, silhouetteHalfWidth, tipDirection } from "./design";
 import { toLabImage } from "./oklab";
 import { nailRegion, prepareImage } from "./region";
 import { inEllipse, scene } from "./synthetic.test-helpers";
@@ -115,16 +115,32 @@ describe("nailDesign", () => {
     expect(white).toBeGreaterThan(0);
   });
 
-  it("leaves outside the outline see-through for press-ons", () => {
-    const out = nailDesign(src, 1, region, 120, "#1E5A3C", { transparent: true });
-    expect(out.data[3]).toBe(0);
-    const mid = ((out.height >> 1) * out.width + (out.width >> 1)) * 4;
-    expect(out.data[mid + 3]).toBe(255);
+  it("cuts press-ons to a clean silhouette on a transparent background", () => {
+    const out = nailDesign(src, 1, region, 120, "#1E5A3C", { silhouette: "almond" });
+    const alpha = (x: number, y: number) => out.data[(y * out.width + x) * 4 + 3];
+    expect(alpha(0, 0)).toBe(0); // tip corner
+    expect(alpha(out.width >> 1, out.height >> 1)).toBe(255);
+    expect(alpha(out.width >> 1, 2)).toBeGreaterThan(0); // the almond point itself
+    expect(alpha(0, out.height - 1)).toBe(0); // rounded cuticle corner
   });
 
   it("reads from a higher-resolution copy of the photo", () => {
     const big = scene(240, 240, (x, y) => [s.rgba[((y >> 1) * 120 + (x >> 1)) * 4], s.rgba[((y >> 1) * 120 + (x >> 1)) * 4 + 1], s.rgba[((y >> 1) * 120 + (x >> 1)) * 4 + 2]]);
     const out = nailDesign({ data: big.rgba, width: 240, height: 240 }, 2, region, 120, "#1E5A3C");
     expect(at(out, out.width >> 1, Math.round(out.height * 0.75))).toEqual([30, 90, 60]);
+  });
+});
+
+describe("silhouetteHalfWidth", () => {
+  it("is full width mid-nail, rounded at the cuticle and shaped at the tip", () => {
+    for (const tip of TIP_SHAPES) {
+      expect(silhouetteHalfWidth(tip, 0.7)).toBe(1);
+      expect(silhouetteHalfWidth(tip, 1)).toBeCloseTo(0);
+    }
+    // Pointier shapes are narrower near the tip.
+    const at = (tip: (typeof TIP_SHAPES)[number]) => silhouetteHalfWidth(tip, 0.1);
+    expect(at("stiletto")).toBeLessThan(at("almond"));
+    expect(at("almond")).toBeLessThan(at("oval"));
+    expect(at("oval")).toBeLessThan(at("square"));
   });
 });
