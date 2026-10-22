@@ -7,9 +7,18 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 - **Day:** 4 of 12 done (Oct 21, 2026, three days early). Tap-to-pick on inspiration photos + OKLab colour clustering works on `/hand` ("Use an inspiration photo"). **Next:** Day 5, DeepSeek semantics (finish/pattern per finger) + design PNGs.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
-- **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. Hand Quality Gate at `/hand`.
+- **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
+
+**Open items and parked decisions** (keep this list current; details in the session log)
+- **Phone test of tap-to-pick** (Day 4) by the user: not done yet.
+- **Render realism, decision pending (user):** build the "true-colour composite" (exact requested hue + photo grain on YouCam's mask; `scripts/prototypes/true_colour_composite.py`) into the pipeline, or fold it into Day 7 colour matching. Cream looks decent on the phone; Chrome looks cheap (streaks, coral → red).
+- **Camera:** confirm on the phone whether the accepted photo says "camera photo" (full-res ImageCapture) or "video frame".
+- **Known limits:** tap-to-pick tuned on 3 photos only (half-hidden thumbs can leak into look-alike backgrounds; chrome outlines aren't accents). Side-on thumbs still get painted by YouCam.
+- **Tooling:** the Vercel MCP returns 403 for deployments and runtime logs. Check deploys with `gh api repos/laafou98/nailssalon/commits/<sha>/status`; debug server errors by reproducing locally (`dev-live` launch config).
+- **Dev quirk:** React dev mode runs the hand-upload effect twice (two sessions per local test). Clean up test sessions, rows and storage objects after local tests; never delete the user's phone sessions or rows that carry real units.
+- **Not urgent:** a visible display/lag polish for the rendered image (user: "fix later"); UI/UX polish deferred, the user wants functionality first.
 
 ## Build plan tracker
 

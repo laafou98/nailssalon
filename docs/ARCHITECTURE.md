@@ -13,8 +13,8 @@ YouCam renders. We do the work around it: hand-photo gating, per-finger design e
 │  Camera / upload                                                           │
 │   └─► [A] Hand Quality Gate  (MediaPipe HandLandmarker, WASM, free)        │
 │          one hand · palm ≥ 50% · nails in frame · blur · exposure          │
-│   └─► [B] Landmark-guided nail crops  (inspiration photo + hand photo)     │
-│          fingertip landmarks 4/8/12/16/20 → oriented crop per finger       │
+│   └─► [B] Tap-to-pick nail crops on the inspiration photo                  │
+│          tap thumb → pinky · OKLab region flood · k-means colours          │
 │   └─► Spec editor UI (shape, length, colour, finish per finger)            │
 └───────────────┬────────────────────────────────────────────────────────────┘
                 │ HTTPS (Next.js route handlers; YouCam key never leaves server)
@@ -87,11 +87,14 @@ interface FingerSpec {
 - Checks, mirroring YouCam's documented failure modes:
   - exactly 1 hand (`numHands: 2`, reject if 2)
   - palm ≥ half the image area (Nail VTO guidance): we auto-crop around the hand to 1:1, 3:4 or 4:3, then check the hand box covers ≥ 50% of the crop
-  - all 5 fingertip landmarks inside the frame, back of hand facing camera (handedness + z-order)
+  - all 5 fingertip landmarks inside the frame
+  - back of hand facing the camera: handedness label (treated as the anatomical hand for un-mirrored photos) + landmark winding
+  - pose: hand turned ≤ 30° from flat (2D knuckle-width / palm-length ratio; direction from landmark z). MediaPipe's 3D world landmarks proved useless for this
   - sharpness: variance of Laplacian on fingertip crops
   - exposure: mean luminance in range
-- Live guidance overlay: "Move closer", "Show the back of your hand", "Too dark".
-- Output: normalised JPEG (long side ≤ 2048, aspect 3:4 or 1:1), plus landmarks JSON.
+- Live guidance overlay: one headline ("Turn your hand flat: bring your little finger towards the camera", "Too dark") plus a 3D hand card that mirrors the hand's turn and flips to a palm face when the palm shows. Auto-capture only when the pose passes.
+- Capture: full-resolution `ImageCapture.takePhoto()` where supported (Chrome/Android), else the video frame (iOS).
+- Output: normalised JPEG (long side ≤ 2048, aspect 1:1, 3:4 or 4:3), plus landmarks JSON. Uploaded to `POST /api/hands`.
 
 ### [B] Nail crops (browser)
 > **Changed Oct 21:** MediaPipe can't find hands in real inspiration photos, so inspiration photos use **tap-to-pick** (`src/lib/inspo/`): the user taps the nails thumb → pinky, each tap is outlined by an OKLab region flood and measured with k-means. The landmark approach below still applies to the client's own hand photo.
@@ -104,7 +107,7 @@ The key technique. Nail Transfer shuffles designs across fingers. We avoid that 
 - Fallback when no hand is detected (e.g. press-on product shot): send the whole image to the vision model for boxes, or route to Nail Transfer (see [D]).
 
 ### [C] Design Compiler (server)
-1. **Colour:** k-means (k=3) in OKLab on each crop, after masking out skin pixels (skin model seeded from the hand region). → `baseHex`, `accentHexes`.
+1. **Colour:** done in the browser by tap-to-pick (`src/lib/inspo/colours.ts`): k-means in OKLab on each outlined nail, skipping glare and skin at the border → `baseHex`, `accentHexes`.
 2. **Semantics:** one vision-LLM call per inspiration image with the 5 crops + full image. Returns per-finger `texture`, `pattern`, `confidence`, and global `shape`/`length` estimates, as structured JSON (schema-validated with zod).
 3. **Design PNGs:** for `pattern ∈ {art, french, ombre, cat_eye}`, the crop is masked to the nail ellipse, given a transparent background and resized into Nail VTO's limits (width 271–542, height 522–1044, ≤ 1 MB) with `sharp`. Stored in `designs/`.
 4. **Confidence:** combines landmark visibility, crop sharpness, cluster separation and LLM confidence.
@@ -183,7 +186,7 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 | Hand landmarks | `@mediapipe/tasks-vision` (browser) |
 | Colour science | `culori` (OKLab, CIELAB, CIEDE2000) |
 | Image processing | `sharp` (server) |
-| Vision model | Claude API, structured JSON output |
+| Vision model | DeepSeek V4.1 Flash (`deepseek-flash`, OpenAI-compatible, image input), structured JSON validated with zod. Blocked on the user's network: test via Vercel |
 | DB / storage / auth | Supabase |
 | Validation | `zod` |
 | Tests | Vitest for spec → payload, colour maths, router, cache keys |
@@ -208,7 +211,7 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 | 1 | Oct 21 | Scaffold Next.js + Supabase, schema + RLS, YouCam server client, deploy skeleton to Vercel |
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger (tests) |
-| 4 | Oct 24 | [B] landmark crops on inspiration photos; colour clustering |
+| 4 | Oct 24 | [B] tap-to-pick nail crops on inspiration photos (landmarks failed on real photos); colour clustering |
 | 5 | Oct 25 | [C] vision-LLM semantics + design PNG generation; router [D] with Transfer fallback |
 | 6 | Oct 26 | Spec editor UI (shape, length, colour, finish per finger), before/after compare |
 | 7 | Oct 27 | [E] skin tone, undertone, polish matching, quote rules; salon admin (catalogue) |
@@ -226,7 +229,8 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 
 | Risk | Mitigation |
 |---|---|
-| Landmarks fail on cropped inspiration photos (no full hand) | Vision-model box fallback, then Nail Transfer; label the result "approximate" |
+| Landmarks fail on cropped inspiration photos (no full hand) | **Happened (Oct 21).** Switched to tap-to-pick; the vision model may pre-place taps later; Nail Transfer stays the "approximate" fallback |
+| Renders look "pasted on" (chrome streaks, hue drift, too clean on noisy photos) | Full-res capture; Cream as the default finish; optional true-colour composite (`scripts/prototypes/`), decision pending |
 | Design PNGs look poor in VTO | Test in week 1; fall back to colour + pattern params, or Transfer, for art nails |
 | Units run out | Cache, per-session caps, global ledger; ~1 unit per render; social bonus (+1,000) |
 | Skin-tone accuracy under bad light | Exposure gate in [A]; show confidence; let the user pick undertone manually |
@@ -238,5 +242,5 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 
 - `YOUCAM_API_KEY`: ✅ in `.env.local`
 - Supabase project: URL + anon key + service role key
-- Claude API key (vision extraction)
+- `DEEPSEEK_API_KEY` (vision extraction): ✅ set in `.env.local` and on Vercel
 - Vercel project (GitHub repo connected)
