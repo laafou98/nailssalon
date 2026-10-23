@@ -107,3 +107,24 @@ export async function looksLikeOwnHand(file: Blob): Promise<boolean> {
     bitmap.close();
   }
 }
+
+/** Re-encodes an image as a JPEG no longer than `longSide` (transparent areas become white). */
+export async function toJpeg(image: Blob, longSide: number, quality = 0.88): Promise<Blob> {
+  const bitmap = await createImageBitmap(image, { imageOrientation: "from-image" });
+  try {
+    const s = Math.min(1, longSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * s));
+    canvas.height = Math.max(1, Math.round(bitmap.height * s));
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (!blob) throw new Error("Couldn't encode the image");
+    return blob;
+  } finally {
+    bitmap.close();
+  }
+}

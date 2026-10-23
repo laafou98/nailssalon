@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng } from "@/lib/inspo/browser";
+import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng, toJpeg } from "@/lib/inspo/browser";
 import {
   LENGTHS,
   TIP_SHAPES,
@@ -17,13 +17,16 @@ import {
   withDesigns,
 } from "@/lib/inspo/pick";
 import type { Point } from "@/lib/inspo/region";
-import { type DesignSpec, FINGERS } from "@/lib/spec/types";
+import { type EngineChoice, chooseEngine } from "@/lib/render/router";
+import { type DesignSpec, FINGERS, type Texture, designSpecSchema, solidSpec } from "@/lib/spec/types";
+import { type DesignReading, applyReading, needsArtwork } from "@/lib/vision/reading";
 
 /**
  * Tap-to-pick: upload an inspiration photo, tap its nails thumb → pinky (or
  * skip a finger that isn't visible), see each outline and its colours, then
  * try the per-finger design on. Each finger copies the nail's artwork (a
- * cut-out PNG) or just its colour. Everything but the upload runs on the device.
+ * cut-out PNG) or just its colour. Outlines and colours are found on the device;
+ * once all five are picked, the vision model reads each nail's finish and pattern.
  */
 
 const LABELS = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
@@ -53,6 +56,48 @@ function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, ext
 
 const TIP_LABELS: Record<TipShape, string> = { almond: "Almond", stiletto: "Stiletto", oval: "Oval", square: "Square", squoval: "Squoval" };
 
+const TEXTURE_LABELS: Record<Texture, string> = {
+  matte: "Matte",
+  cream: "Cream",
+  jelly: "Jelly",
+  sheer: "Sheer",
+  metallic: "Chrome",
+  pearl: "Pearl",
+  shimmer_fine: "Shimmer",
+  shimmer_coarse: "Glitter",
+  textured: "Textured",
+};
+
+type Reading = { status: "reading" } | { status: "done"; value: DesignReading } | { status: "error"; error: string };
+
+async function postForm<T>(url: string, body: FormData): Promise<T> {
+  const res = await fetch(url, { method: "POST", body });
+  const json = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `Server error (${res.status})`);
+  return json;
+}
+
+async function uploadInspiration(file: Blob): Promise<string> {
+  const body = new FormData();
+  body.set("photo", await toJpeg(file, 1536), "inspiration.jpg");
+  return (await postForm<{ imageId: string }>("/api/inspirations", body)).imageId;
+}
+
+/** Asks the vision model about the picked nails: one small crop per finger plus the stored photo. */
+async function requestReading(inspoId: string, loaded: LoadedInspiration, picks: (NailPick | null)[]): Promise<DesignReading> {
+  const body = new FormData();
+  body.set("inspoImageId", inspoId);
+  await Promise.all(
+    picks.map(async (pick, i) => {
+      if (pick) body.set(`crop_${FINGERS[i]}`, await toJpeg(await cutout(loaded, pick, false, null), 384, 0.85), "crop.jpg");
+    }),
+  );
+  return postForm<DesignReading>("/api/designs/extract", body);
+}
+
+/** Readings per photo and set of taps, so undo/redo doesn't ask again. */
+const readings = new Map<string, Promise<DesignReading>>();
+
 async function uploadDesign(png: Blob): Promise<string> {
   const body = new FormData();
   body.set("design", png, "design.png");
@@ -76,7 +121,7 @@ function pickAll(image: InspirationImage, taps: (Point | null)[]): (NailPick | n
   return first.map((p, i) => (p && typical && p.region.area > 2 * typical ? pickNail(image, taps[i]!, typical) : p));
 }
 
-export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignSpec) => void; busy: boolean }) {
+export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignSpec, engine: EngineChoice) => void; busy: boolean }) {
   const [loaded, setLoaded] = useState<LoadedInspiration | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,15 +141,60 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const [length, setLength] = useState<number | null>(null);
   /** The chosen photo looks like the client's own hand, not a nail design. */
   const [ownHand, setOwnHand] = useState(false);
+  /** The photo as stored on the server (vision model input, Nail Transfer reference). */
+  const [inspoId, setInspoId] = useState<string | null>(null);
+  const [readingByKey, setReadingByKey] = useState<Record<string, Reading>>({});
+  /** The reading whose Design/Colour defaults were applied, so a repeat doesn't undo the user's toggles. */
+  const appliedRef = useRef<string | null>(null);
+  const fileRef = useRef<Blob | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const picks = useMemo(() => (loaded ? pickAll(loaded.image, taps) : []), [loaded, taps]);
-  const spec = useMemo(() => (picks.length ? draftSpec([...picks, ...Array(FINGERS.length - picks.length).fill(null)]) : null), [picks]);
+  const allPicks = useMemo(() => [...picks, ...Array(FINGERS.length - picks.length).fill(null)] as (NailPick | null)[], [picks]);
   const done = taps.length >= FINGERS.length;
+  const sources = useMemo(() => sourceFingers(allPicks), [allPicks]);
+  const readingKey = done && inspoId ? `${inspoId}|${JSON.stringify(taps)}` : null;
+  const reading: Reading | null = readingKey ? (readingByKey[readingKey] ?? { status: "reading" }) : null;
+  const read = reading?.status === "done" ? reading.value : null;
+  const spec = useMemo(() => {
+    const draft = picks.length ? draftSpec(allPicks) : null;
+    if (!draft) return null;
+    const s = read ? applyReading(draft, read, sources) : draft;
+    return inspoId ? designSpecSchema.parse({ ...s, source: { kind: "inspiration", imageId: inspoId } }) : s;
+  }, [picks.length, allPicks, read, sources, inspoId]);
   const guess = useMemo(() => (loaded ? guessExtensions(picks, loaded.width) : null), [loaded, picks]);
-  const shape = tip ?? guess?.tip ?? "almond";
-  const nailLength = length ?? guess?.length ?? 1.4;
-  const sources = useMemo(() => sourceFingers([...picks, ...Array(FINGERS.length - picks.length).fill(null)]), [picks]);
+  const shape = tip ?? read?.shape ?? guess?.tip ?? "almond";
+  const nailLength = length ?? read?.length ?? guess?.length ?? 1.4;
+  const approximate = spec !== null && chooseEngine(spec) === "nail_transfer";
+
+  // Once all five are picked: read finish, pattern, shape and length (vision model, no YouCam units).
+  useEffect(() => {
+    if (!readingKey || !loaded || !inspoId) return;
+    let cancelled = false;
+    if (!readings.has(readingKey)) readings.set(readingKey, requestReading(inspoId, loaded, allPicks));
+    const pickSources = sourceFingers(allPicks);
+    readings.get(readingKey)!.then(
+      (value) => {
+        if (cancelled) return;
+        setReadingByKey((r) => ({ ...r, [readingKey]: { status: "done", value } }));
+        if (appliedRef.current !== readingKey) {
+          appliedRef.current = readingKey;
+          // Plain nails render best as colour (real finish); art, French, ombre and cat-eye need the artwork.
+          setUseDesign(FINGERS.map((_, i) => {
+            const r = pickSources[i] === null ? null : value.fingers[pickSources[i]!];
+            return r?.pattern ? needsArtwork(r.pattern) : true;
+          }));
+        }
+      },
+      (e: unknown) => {
+        readings.delete(readingKey); // let a later attempt retry
+        if (!cancelled) setReadingByKey((r) => ({ ...r, [readingKey]: { status: "error", error: e instanceof Error ? e.message : String(e) } }));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [readingKey, loaded, inspoId, allPicks]);
 
   // Cut-out previews for every picked nail.
   useEffect(() => {
@@ -176,7 +266,14 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     setError(null);
     try {
       const next = await loadInspiration(file);
+      fileRef.current = file;
       setLoaded(next);
+      setInspoId(null);
+      uploadInspiration(file).then(
+        (id) => fileRef.current === file && setInspoId(id),
+        // Picking still works without it; only the finish reading and Nail Transfer need it.
+        (e: unknown) => fileRef.current === file && setError(`Couldn't save the photo for reading (${e instanceof Error ? e.message : String(e)}).`),
+      );
       setTaps([]);
       setRedo([]);
       setFlipped(FINGERS.map(() => false));
@@ -218,9 +315,18 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
 
   const toggle = (list: boolean[], i: number) => list.map((v, k) => (k === i ? !v : v));
 
-  /** Uploads the cut-outs the design fingers need (once per picked nail), then renders. */
-  const tryOn = async () => {
-    if (!spec || !loaded) return;
+  /**
+   * Uploads the cut-outs the design fingers need (once per picked nail), then renders.
+   * Done for Nail Transfer too, so "render each finger exactly" can follow with the art.
+   * With nothing picked, Transfer gets a placeholder spec (confidence 0) that only carries the photo.
+   */
+  const render = async (engine: EngineChoice) => {
+    if (!loaded || (!spec && engine !== "nail_transfer")) return;
+    if (!spec) {
+      if (!inspoId) return;
+      const placeholder = { ...solidSpec("#FFFFFF"), source: { kind: "inspiration", imageId: inspoId }, confidence: 0 };
+      return onTryOn(designSpecSchema.parse(placeholder), engine);
+    }
     setPreparing(true);
     setError(null);
     try {
@@ -234,7 +340,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
         }),
       );
       const designed = withDesigns(spec, ids);
-      onTryOn(extensions ? asExtensions(designed, shape, nailLength) : designed);
+      onTryOn(extensions ? asExtensions(designed, shape, nailLength) : designed, engine);
     } catch (e) {
       setError(`Couldn't prepare the nail designs (${e instanceof Error ? e.message : String(e)}).`);
     } finally {
@@ -330,6 +436,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
                   <span className="text-[10px] leading-tight text-zinc-500">
                     {!f ? "–" : !picked ? "copied" : f.confidence < 0.6 ? "unsure" : ""}
                   </span>
+                  {f && read && <span className="text-[10px] leading-tight" data-texture={f.texture}>{TEXTURE_LABELS[f.texture]}</span>}
                   {f && (
                     <button
                       onClick={() => setUseDesign(toggle(useDesign, i))}
@@ -351,6 +458,16 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
           <p className="text-xs text-zinc-500">
             &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
           </p>
+          {reading && (
+            <p className="text-sm" aria-live="polite" data-reading={reading.status}>
+              {reading.status === "reading" && "Reading the finish and pattern…"}
+              {reading.status === "done" &&
+                (reading.value.isNailDesign
+                  ? reading.value.summary || "Finish and pattern read."
+                  : "This doesn't look like a nail design. Choose a photo that shows painted nails.")}
+              {reading.status === "error" && <span className="text-amber-700">Couldn&apos;t read the finish, so Cream is assumed. You can still try it on.</span>}
+            </p>
+          )}
 
           <div className="flex flex-col gap-2">
             <div className="flex rounded-full border border-zinc-300 p-1 text-sm dark:border-zinc-700" role="tablist" aria-label="Nail length">
@@ -401,12 +518,30 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
             )}
           </div>
 
+          {approximate && (
+            <p className="text-xs text-amber-700">
+              The nail outlines look unsure, so YouCam&apos;s Nail Transfer will copy the whole photo instead (approximate: designs may land on other fingers). Redo the unsure taps for an exact per-finger try-on.
+            </p>
+          )}
           <button
-            onClick={tryOn}
-            disabled={!spec || busy || preparing}
+            onClick={() => render("auto")}
+            disabled={!spec || busy || preparing || reading?.status === "reading"}
             className="rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
           >
-            {preparing ? "Preparing designs…" : busy ? "Rendering…" : done ? "Try this on my hand" : "Try this on my hand (missing fingers copy the nearest)"}
+            {preparing
+              ? "Preparing designs…"
+              : busy
+                ? "Rendering…"
+                : reading?.status === "reading"
+                  ? "Reading the design…"
+                  : approximate
+                    ? "Try this on my hand (approximate)"
+                    : done
+                      ? "Try this on my hand"
+                      : "Try this on my hand (missing fingers copy the nearest)"}
+          </button>
+          <button onClick={() => render("nail_transfer")} disabled={!inspoId || busy || preparing || reading?.status === "reading"} className="text-sm text-zinc-500 underline disabled:opacity-40">
+            Compare: let YouCam copy the whole photo (Nail Transfer)
           </button>
         </>
       )}

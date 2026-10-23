@@ -15,6 +15,12 @@ export async function putObject(path: string, bytes: Uint8Array, contentType: st
   if (error) throw new Error(`Storage upload failed for ${path}: ${error.message}`);
 }
 
+export async function getObject(path: string): Promise<Uint8Array> {
+  const { data, error } = await supabaseAdmin().storage.from(IMAGES_BUCKET).download(path);
+  if (error) throw new Error(`Storage download failed for ${path}: ${error.message}`);
+  return new Uint8Array(await data.arrayBuffer());
+}
+
 export async function signedUrl(path: string): Promise<string> {
   const { data, error } = await supabaseAdmin()
     .storage.from(IMAGES_BUCKET)

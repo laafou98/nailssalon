@@ -1,14 +1,16 @@
 import "server-only";
 import { serverEnv } from "@/lib/env";
 import { type DesignSpec } from "@/lib/spec/types";
-import { renderCacheKey, toNailVtoPayload } from "@/lib/spec/payload";
+import { renderCacheKey, toNailVtoPayload, toTransferPayload, transferCacheKey } from "@/lib/spec/payload";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
 import { ENGINES, YouCamError, createTask, getTask } from "@/lib/youcam/client";
 import { sniffImageType } from "./image-type";
+import { type EngineChoice, type EngineName, chooseEngine } from "./router";
 
 /**
- * Render [D], Nail VTO path. One render = one YouCam unit, guarded three ways:
+ * Render [D]. The router picks the engine: Nail VTO renders the per-finger spec,
+ * Nail Transfer copies the raw inspiration photo when the spec isn't trusted. One render = one YouCam unit, guarded three ways:
  *  1. cache: identical (hand photo, visible spec) requests reuse the first render;
  *  2. unit ledger: per-session and global caps, reserved atomically before the call;
  *  3. refunds: a render that fails gives its unit back (YouCam only charges successes).
@@ -16,9 +18,9 @@ import { sniffImageType } from "./image-type";
  */
 
 export type RenderView =
-  | { id: string; status: "running" }
-  | { id: string; status: "success"; resultUrl: string; cached: boolean }
-  | { id: string; status: "error"; error: string };
+  | { id: string; engine: EngineName; status: "running" }
+  | { id: string; engine: EngineName; status: "success"; resultUrl: string; cached: boolean }
+  | { id: string; engine: EngineName; status: "error"; error: string };
 
 export class RenderError extends Error {
   constructor(
@@ -29,12 +31,12 @@ export class RenderError extends Error {
   }
 }
 
-const ENGINE = "nail_vto" as const;
 /** Give up on a task YouCam hasn't finished after this long (observed: 7–10 s). */
 const TASK_TIMEOUT_MS = 2 * 60_000;
 
 interface RenderRow {
   id: string;
+  engine: EngineName;
   status: "pending" | "running" | "success" | "error";
   error: string | null;
   youcam_task_id: string | null;
@@ -44,17 +46,23 @@ interface RenderRow {
 }
 
 const RENDER_COLUMNS =
-  "id, status, error, youcam_task_id, created_at, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id)";
+  "id, engine, status, error, youcam_task_id, created_at, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id)";
 
 async function view(row: RenderRow, cached = false): Promise<RenderView> {
+  const { id, engine } = row;
   if (row.status === "success" && row.result) {
-    return { id: row.id, status: "success", resultUrl: await signedUrl(row.result.path), cached };
+    return { id, engine, status: "success", resultUrl: await signedUrl(row.result.path), cached };
   }
-  if (row.status === "error") return { id: row.id, status: "error", error: row.error ?? "unknown_error" };
-  return { id: row.id, status: "running" };
+  if (row.status === "error") return { id, engine, status: "error", error: row.error ?? "unknown_error" };
+  return { id, engine, status: "running" };
 }
 
-export async function startRender(sessionId: string, handImageId: string, spec: DesignSpec): Promise<RenderView> {
+export async function startRender(
+  sessionId: string,
+  handImageId: string,
+  spec: DesignSpec,
+  choice: EngineChoice = "auto",
+): Promise<RenderView> {
   const db = supabaseAdmin();
 
   const { data: hand } = await db
@@ -65,10 +73,13 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
   if (!hand || hand.kind !== "hand" || hand.session_id !== sessionId) {
     throw new RenderError("Hand photo not found", 404);
   }
-  const designPaths = await designImagePaths(sessionId, spec);
+  const engine = chooseEngine(spec, choice);
+  // Transfer needs the inspiration photo; VTO needs every design finger's PNG.
+  const ref = engine === "nail_transfer" ? await inspirationImage(sessionId, spec) : null;
+  const designPaths = engine === "nail_vto" ? await designImagePaths(sessionId, spec) : {};
 
   // 1. Cache.
-  const cacheKey = renderCacheKey(spec, hand.sha256);
+  const cacheKey = ref ? transferCacheKey(hand.sha256, ref.sha256) : renderCacheKey(spec, hand.sha256);
   const { data: hit } = await db.from("renders").select(RENDER_COLUMNS).eq("cache_key", cacheKey).maybeSingle<RenderRow>();
   if (hit && hit.status !== "error") return view(hit, true);
   if (hit) await db.from("renders").delete().eq("id", hit.id); // a failed render may be retried
@@ -82,7 +93,7 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
   if (designError) throw new Error(`Could not save design: ${designError.message}`);
   const { data: render, error: insertError } = await db
     .from("renders")
-    .insert({ design_id: design.id, hand_image_id: hand.id, cache_key: cacheKey, engine: ENGINE, status: "pending" })
+    .insert({ design_id: design.id, hand_image_id: hand.id, cache_key: cacheKey, engine, status: "pending" })
     .select("id")
     .single();
   if (insertError) {
@@ -97,8 +108,8 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
   const { data: reserved, error: reserveError } = await db.rpc("reserve_units", {
     p_session_id: sessionId,
     p_render_id: render.id,
-    p_engine: ENGINE,
-    p_units: ENGINES[ENGINE].units,
+    p_engine: engine,
+    p_units: ENGINES[engine].units,
     p_session_cap: serverEnv("UNITS_SESSION_CAP"),
     p_global_cap: serverEnv("UNITS_GLOBAL_CAP"),
   });
@@ -111,15 +122,33 @@ export async function startRender(sessionId: string, handImageId: string, spec: 
 
   // 3. YouCam task, with short-lived signed URLs for the inputs.
   try {
-    const payload = toNailVtoPayload(spec, await signedUrl(hand.path), await signAll(designPaths));
-    const taskId = await createTask(ENGINE, payload);
+    const handUrl = await signedUrl(hand.path);
+    const payload = ref
+      ? toTransferPayload(handUrl, await signedUrl(ref.path))
+      : toNailVtoPayload(spec, handUrl, await signAll(designPaths));
+    const taskId = await createTask(engine, payload);
     await db.from("renders").update({ status: "running", youcam_task_id: taskId }).eq("id", render.id);
-    return { id: render.id, status: "running" };
+    return { id: render.id, engine, status: "running" };
   } catch (error) {
     const message = error instanceof YouCamError ? (error.code ?? error.message) : String(error);
     await failRender(render.id, message);
-    return { id: render.id, status: "error", error: message };
+    return { id: render.id, engine, status: "error", error: message };
   }
+}
+
+/** The spec's inspiration photo, which must be this session's own. */
+async function inspirationImage(sessionId: string, spec: DesignSpec): Promise<{ path: string; sha256: string }> {
+  const id = spec.source.imageId;
+  if (!id) throw new RenderError("Nail Transfer needs the inspiration photo", 400);
+  const { data } = await supabaseAdmin()
+    .from("images")
+    .select("path, sha256")
+    .eq("id", id)
+    .eq("session_id", sessionId)
+    .eq("kind", "inspo")
+    .maybeSingle();
+  if (!data) throw new RenderError("Inspiration photo not found", 404);
+  return data;
 }
 
 /** Storage paths of every design finger's PNG, keyed by image id. Each must be this session's own design image. */
@@ -162,17 +191,18 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
 
   // Ask YouCam before applying the timeout: a task that finished while nobody was
   // polling has already cost a unit and must still be collected.
-  const state = await getTask(ENGINE, row.youcam_task_id);
+  const { id, engine } = row;
+  const state = await getTask(engine, row.youcam_task_id);
   if (state.status === "running") {
     if (Date.now() - new Date(row.created_at).getTime() > TASK_TIMEOUT_MS) {
-      await failRender(row.id, "timeout");
-      return { id: row.id, status: "error", error: "timeout" };
+      await failRender(id, "timeout");
+      return { id, engine, status: "error", error: "timeout" };
     }
-    return { id: row.id, status: "running" };
+    return { id, engine, status: "running" };
   }
   if (state.status === "error") {
-    await failRender(row.id, state.error);
-    return { id: row.id, status: "error", error: state.error };
+    await failRender(id, state.error);
+    return { id, engine, status: "error", error: state.error };
   }
 
   // Success: copy the result out of YouCam before its URL expires. Safe to repeat if two polls race.
@@ -189,5 +219,5 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
     .update({ status: "success", result_image_id: image.id, completed_at: new Date().toISOString() })
     .eq("id", row.id)
     .eq("status", "running");
-  return { id: row.id, status: "success", resultUrl: await signedUrl(path), cached: false };
+  return { id, engine, status: "success", resultUrl: await signedUrl(path), cached: false };
 }

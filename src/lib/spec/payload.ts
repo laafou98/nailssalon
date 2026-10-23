@@ -94,3 +94,14 @@ export function renderCacheKey(spec: DesignSpec, handSha256: string): string {
   const payload = toNailVtoPayload(spec, `sha256:${handSha256}`, designIds);
   return createHash("sha256").update(canonicalJson({ engine: "nail_vto", payload })).digest("hex");
 }
+
+/** Nail Transfer request body: YouCam copies the reference photo's nails onto the hand. */
+export function toTransferPayload(handUrl: string, refUrl: string) {
+  return { src_file_url: handUrl, ref_file_url: refUrl };
+}
+
+/** Cache key for a Nail Transfer render: only the two photos change the picture. */
+export function transferCacheKey(handSha256: string, refSha256: string): string {
+  const payload = toTransferPayload(`sha256:${handSha256}`, `sha256:${refSha256}`);
+  return createHash("sha256").update(canonicalJson({ engine: "nail_transfer", payload })).digest("hex");
+}

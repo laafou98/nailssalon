@@ -27,6 +27,7 @@
       "runtimeArgs": [
         "NODE_USE_ENV_PROXY=1",
         "YOUCAM_MOCK=1",
+        "DEEPSEEK_MOCK=1",
         "npm",
         "run",
         "dev"

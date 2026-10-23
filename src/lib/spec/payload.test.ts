@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalJson, renderCacheKey, toNailVtoPayload } from "./payload";
+import { canonicalJson, renderCacheKey, toNailVtoPayload, transferCacheKey } from "./payload";
 import { type DesignSpecInput, FINGERS, designSpecSchema, solidSpec } from "./types";
 
 const DESIGN_ID = "3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f";
@@ -104,5 +104,14 @@ describe("renderCacheKey", () => {
 describe("canonicalJson", () => {
   it("sorts keys at every level but keeps array order", () => {
     expect(canonicalJson({ b: 1, a: { d: [2, 1], c: 0 } })).toBe('{"a":{"c":0,"d":[2,1]},"b":1}');
+  });
+});
+
+describe("transferCacheKey", () => {
+  it("depends on both photos and never collides with a VTO key", () => {
+    const key = transferCacheKey("a".repeat(64), "b".repeat(64));
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(transferCacheKey("a".repeat(64), "c".repeat(64))).not.toBe(key);
+    expect(renderCacheKey(solidSpec("#B0123A"), "a".repeat(64))).not.toBe(key);
   });
 });

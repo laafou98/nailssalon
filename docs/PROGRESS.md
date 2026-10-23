@@ -5,13 +5,15 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 in progress (Oct 22, 2026). Tap-to-pick copies each nail's **artwork** (design PNG → Nail VTO `sub_type: "design"`); the user's first real design render worked. New: **Keep my length** (art fitted to natural nails) vs **Extensions** (press-on mode, shape + length guessed from the photo), and a warning when the "inspiration" is really the client's own hand. Extensions verified with the mock only. **Next:** real renders of both modes on the phone, then DeepSeek semantics and the Transfer fallback.
+- **Day:** 5 of 12 in progress (Oct 23, 2026). Day 5 code is complete but **not yet pushed**: **DeepSeek design reading** (finish, pattern, shape, length per nail → spec; plain nails default to Colour, art/French/ombre/cat-eye to Design) and the **render router** (Nail VTO per finger, or YouCam Nail Transfer on the whole photo when the spec is unsure, labelled "approximate"; plus a "Compare" button). Verified with fake YouCam + fake DeepSeek only. **Next:** push, then on the phone: first real DeepSeek call (confirms the `deepseek-flash` model ID), one real Transfer render, and the two length modes.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
+- **First real DeepSeek call** (Oct 23): only mocked so far (Zscaler blocks it locally). Model ID `deepseek-flash` comes from third-party guides (official Aug 21 note named the now-retired `deepseek-v4-flash-vision-exp`); override with the `DEEPSEEK_MODEL` env var on Vercel if the call fails. Check the summary and per-finger finishes on a real photo.
+- **Router threshold** (Oct 23): Transfer below spec confidence 0.6 (pick confidence averaged with the model's). Tune once real readings come in; maybe too eager with unsure outlines.
 - **Curled-fingers hand pose** (Oct 22): now accepted by the gate (palm side + fingertips folded near their knuckles). Rule set from geometry; confirm live on the phone (free), then one real render to see if YouCam handles it.
 - **Nail outlining is the weak link** (Oct 22): pale glitter nails on pale skin/background lose their rims or fail; half-hidden thumbs fail. Proposal: SlimSAM (tap → segment) in the browser, ≈ 14 MB quantized ONNX, self-hosted. Waiting on the user's go-ahead.
 - **Real renders of both length modes** (Day 5): "Keep my length" with the short-nail crop, and "Extensions" (press-on: never rendered for real yet). Check what YouCam's `length` 1.0–2.15 actually looks like and adjust the Short/Medium/Long/Extra long steps.
@@ -32,7 +34,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
-| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Design PNGs + length modes done (Oct 22); DeepSeek + Transfer fallback next |
+| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 All built (Oct 22–23); real DeepSeek + Transfer renders to confirm on the phone |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
@@ -230,3 +232,19 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - Extensions are drawn into a clean silhouette per tip shape (`silhouetteHalfWidth`: almond, stiletto, oval, square, squoval; rounded oval cuticle; 1.5 px anti-aliasing), filled with the cut-out (base colour where the outline missed). Changing the shape redraws the previews. 2 tests (86 total).
 
 **Outline diagnosis** on a crop of the user's screenshot of the glitter photo: middle/ring/pinky outlines cover the nail centres but miss the pale mint rims; the half-hidden thumb is a few pixels. Colour-distance flooding can't separate pale glitter from pale skin and a white wall. See the SlimSAM proposal in open items.
+
+### Session 4, Oct 23, 2026: DeepSeek design reading, render router
+**DeepSeek key check:** Zscaler blocks api.deepseek.com from the Mac (block page returned), so the key and its model list are still unchecked; the user deferred it. Web research: `deepseek-flash` (V4.1 Flash) accepts images (base64 or URL, ≤ 384 tokens each); `deepseek-v4-pro` is text-only.
+
+**Built (Day 5, [C] semantics + [D] router)**, 0 YouCam units
+- `src/lib/vision/reading.ts` (pure, 9 tests): the chat request (system prompt with our texture/pattern/shape vocabularies; full photo + one crop per tapped finger; `response_format: json_object`), a lenient parser (unknown values drop that field, not the reading; fenced JSON accepted; length names → our 1.0/1.4/1.8/2.15 steps) and `applyReading` (each finger takes the finish/pattern of the nail it copies; confidence = mean of outline and model confidence). Colours never come from the model.
+- `src/lib/vision/deepseek.ts`: the call (45 s timeout). `DEEPSEEK_MOCK=1` (local, non-production) returns a fixed reading; the `dev-mock` launch config now sets it.
+- `POST /api/inspirations`: stores the inspiration photo (browser re-encodes to JPEG ≤ 1536 px) as `inspo/<sha256>.jpg`; the spec's `source.imageId`. `POST /api/designs/extract`: inspo id + `crop_<finger>` JPEGs (≤ 384 px, ≤ 300 KB) → reading.
+- `src/lib/render/router.ts` (3 tests): `chooseEngine` → Nail Transfer when an inspiration spec with a stored photo has confidence < 0.6, else Nail VTO; explicit choice wins. The render service now handles both engines (Transfer payload `src_file_url` + `ref_file_url`, its own cache key from the two photo hashes, `engine` stored per render and returned to the browser). `POST /api/renders` takes optional `engine`.
+- UI (`InspoPicker`, `TryOn`): after the fifth tap, "Reading the finish and pattern…", then the model's one-line summary and a finish label under each finger; Design/Colour defaults from the pattern; extension shape/length default to the model's answer (then the outline guess). Unsure specs say up front that Nail Transfer will be used. "Compare: let YouCam copy the whole photo (Nail Transfer)" runs Transfer on demand (works with no taps). Transfer results carry an amber "Approximate" note and "Render each finger exactly instead".
+- 97 tests pass; typecheck and lint clean.
+
+**Verified** (`dev-mock`, inspo-5): reading shown (ring = Shimmer + Design, others Cream + Colour), per-finger VTO render, Transfer render with the approximate note, and "Render each finger exactly" hit the cache of the first render. Bug found and fixed on the way: the Transfer button sent the spec without the design cut-outs, so the per-finger redo lost the art. Test rows (3 renders, 3 designs, 3 images, 3 ledger units) and 5 storage objects deleted.
+
+**Next step:** push (ask first), then on the phone: one inspiration try-on (DeepSeek call, about 1 unit), one Compare (1 unit), then both length modes.
+

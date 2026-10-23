@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { GatedPhoto } from "@/lib/hand-gate/browser";
+import type { EngineChoice, EngineName } from "@/lib/render/router";
 import { FINGERS, type DesignSpecInput, type Texture } from "@/lib/spec/types";
 import InspoPicker from "./InspoPicker";
 
@@ -28,18 +29,18 @@ type Upload = { status: "uploading" } | { status: "ready"; imageId: string } | {
 type Render =
   | { status: "idle" }
   | { status: "running" }
-  | { status: "success"; resultUrl: string; cached: boolean }
+  | { status: "success"; resultUrl: string; cached: boolean; engine: EngineName }
   | { status: "error"; error: string };
 
 const POLL_MS = 2000;
 
 /** JSON body, or a readable error if the server replied with something else (e.g. a platform 500 page). */
-type ApiReply = { error?: string; imageId?: string; id?: string; status?: string; resultUrl?: string; cached?: boolean };
+type ApiReply = { error?: string; imageId?: string; id?: string; status?: string; resultUrl?: string; cached?: boolean; engine?: EngineName };
 
 /** The finished states the render API returns (success with a URL, or an error). */
 const toRender = (json: ApiReply): Render =>
   json.status === "success" && json.resultUrl
-    ? { status: "success", resultUrl: json.resultUrl, cached: Boolean(json.cached) }
+    ? { status: "success", resultUrl: json.resultUrl, cached: Boolean(json.cached), engine: json.engine ?? "nail_vto" }
     : { status: "error", error: json.error ?? "unknown_error" };
 
 async function readJson(res: Response): Promise<ApiReply> {
@@ -58,6 +59,8 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
   const [showBefore, setShowBefore] = useState(false);
   const [mode, setMode] = useState<"colour" | "inspiration">("colour");
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The last spec sent, so an approximate Nail Transfer result can be redone per finger. */
+  const [lastSpec, setLastSpec] = useState<DesignSpecInput | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,8 +109,9 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
       fingers: Object.fromEntries(FINGERS.map((f) => [f, { kind: "color", baseHex: hex, texture }])) as DesignSpecInput["fingers"],
     });
 
-  const renderSpec = async (spec: DesignSpecInput) => {
+  const renderSpec = async (spec: DesignSpecInput, engine: EngineChoice = "auto") => {
     if (upload.status !== "ready") return;
+    setLastSpec(spec);
     if (pollRef.current) clearTimeout(pollRef.current);
     setRender({ status: "running" });
     setShowBefore(false);
@@ -116,7 +120,7 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
       const res = await fetch("/api/renders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handImageId: upload.imageId, spec }),
+        body: JSON.stringify({ handImageId: upload.imageId, spec, engine }),
       });
       const json = await readJson(res);
       if (!res.ok) return setRender({ status: "error", error: json.error ?? "unknown_error" });
@@ -220,6 +224,16 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
         </>
       )}
 
+      {render.status === "success" && render.engine === "nail_transfer" && (
+        <div className="flex flex-col gap-1 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+          <p>Approximate: YouCam&apos;s Nail Transfer copied the whole photo, so designs can land on the wrong fingers and fine detail can blur.</p>
+          {lastSpec && (lastSpec.confidence ?? 1) > 0 && (
+            <button onClick={() => renderSpec(lastSpec, "nail_vto")} disabled={busy} className="self-start text-xs underline disabled:opacity-40">
+              Render each finger exactly instead
+            </button>
+          )}
+        </div>
+      )}
       {render.status === "success" && render.cached && (
         <p className="text-xs text-zinc-500">Already rendered this exact look, so no new render was needed.</p>
       )}

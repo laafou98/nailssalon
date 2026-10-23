@@ -108,7 +108,7 @@ The key technique. Nail Transfer shuffles designs across fingers. We avoid that 
 
 ### [C] Design Compiler (server)
 1. **Colour:** done in the browser by tap-to-pick (`src/lib/inspo/colours.ts`): k-means in OKLab on each outlined nail, skipping glare and skin at the border → `baseHex`, `accentHexes`.
-2. **Semantics:** one vision-LLM call per inspiration image with the 5 crops + full image. Returns per-finger `texture`, `pattern`, `confidence`, and global `shape`/`length` estimates, as structured JSON (schema-validated with zod).
+2. **Semantics:** one vision-LLM call per inspiration image with the 5 crops + full image (`src/lib/vision/`, `POST /api/designs/extract`, after the fifth tap). Returns per-finger `texture`, `pattern`, `confidence`, and global `shape`/`length` estimates, as JSON parsed leniently with zod. The pattern sets the Design/Colour default (solid → Colour; french/ombre/cat_eye/art → Design); shape/length are the Extensions defaults.
 3. **Design PNGs:** built in the browser (`src/lib/inspo/design.ts`): each tapped nail is cut out along its axis, tip up, outside-the-outline filled with its base colour, sized into Nail VTO's limits (width 271–542, height 522–1044, ≤ 1 MB). Two fits: "Keep my length" (polish on natural nails: the busiest 1.3 × width stretch of the art, opaque) and "Extensions" (`press_on_nails`, `<tip>_oval` shape + length guessed from the outline's taper and aspect: the whole nail on a transparent background). Uploaded via `POST /api/designs/images` to `designs/<sha256>.png`. For now the user chooses Design or Colour per finger; later the vision model's `pattern` sets the default (art/french/ombre/cat_eye → design).
 4. **Confidence:** combines landmark visibility, crop sharpness, cluster separation and LLM confidence.
 
@@ -119,6 +119,7 @@ if spec.confidence ≥ 0.6 → Nail VTO
                  kind = design → sub_type "design" + ref_file_url (our PNG)
 else                         → Nail Transfer (hand + raw inspiration), labelled "approximate"
 ```
+- Built Oct 23 as `chooseEngine` (`src/lib/render/router.ts`): Transfer only for inspiration specs with a stored photo (`source.imageId`); the request may force an engine (the "Compare" button, "Render each finger exactly instead").
 - **Cache:** key = `sha256(handImageHash + canonicalJSON(spec))`. Identical requests never spend a unit twice.
 - **Unit guard:** `unit_ledger` table; hard caps per session (e.g. 15) and global (e.g. 900); the demo never overdraws.
 - **Polling:** create task, poll every 2 s (observed 7–10 s end-to-end), 60 s timeout; client polls our `/api/renders/:id`.
@@ -165,8 +166,10 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 
 | Route | Purpose |
 |---|---|
-| `POST /api/uploads` | Signed upload URL to Supabase Storage |
-| `POST /api/designs/extract` | Inspiration image + crops → `DesignSpec` |
+| `POST /api/hands` | Gated hand photo → `images` row |
+| `POST /api/inspirations` | Inspiration photo (JPEG) → `images` row (vision input, Transfer reference) |
+| `POST /api/designs/images` | Per-finger design PNG → `images` row |
+| `POST /api/designs/extract` | Stored inspiration + per-finger crops → vision reading (finish, pattern, shape, length) |
 | `PATCH /api/designs/:id` | Edit spec (shape, length, colour, finish) |
 | `POST /api/renders` | Spec + hand → cache hit or new YouCam task |
 | `GET /api/renders/:id` | Status / result (client polls) |
