@@ -17,11 +17,11 @@ Clients bring nail techs blurry screenshots. NailsSalon turns any inspiration ph
 
 ## Tech stack
 
-Next.js (App Router, TypeScript) · Tailwind CSS · Supabase (Postgres, Storage, Auth) · MediaPipe Hand Landmarker · culori (colour science) · DeepSeek (vision) · Vitest · Vercel
+Next.js (App Router, TypeScript) · Tailwind CSS · Supabase (Postgres, Storage, Auth) · MediaPipe Hand Landmarker · culori (colour science) · Claude (vision) · Vitest · Vercel
 
 ## Running locally
 
-Requirements: Node.js 20.9+ (developed on Node 24), a Supabase project, a YouCam API key and a DeepSeek API key.
+Requirements: Node.js 20.9+ (developed on Node 24), a Supabase project, a YouCam API key and an Anthropic (Claude) API key.
 
 ```bash
 git clone https://github.com/laafou98/nailssalon.git
@@ -45,7 +45,7 @@ npm run typecheck
 | Variable | Where it's used |
 |---|---|
 | `YOUCAM_API_KEY` | Server only. YouCam task APIs. |
-| `DEEPSEEK_API_KEY` | Server only. Design extraction from inspiration photos. |
+| `ANTHROPIC_API_KEY` | Server only. Claude reads finish, pattern, shape and length from inspiration photos. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL. |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key (browser-safe). |
 | `SUPABASE_SECRET_KEY` | Server only. Service-role access for the pipeline tables. |

@@ -10,7 +10,7 @@ export async function GET() {
 
   const keys = {
     youcam: Boolean(process.env.YOUCAM_API_KEY),
-    deepseek: Boolean(process.env.DEEPSEEK_API_KEY),
+    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     supabaseSecret: Boolean(process.env.SUPABASE_SECRET_KEY),
   };
 

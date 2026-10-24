@@ -5,14 +5,14 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 (Oct 24, 2026). Pushed: forgiving DeepSeek parsing with the reason shown in the app, a Finish picker, a still-photo hand-detection retry. SlimSAM outlines crashed iPhone Safari (out of memory), so they were replaced by **MobileSAM**: committed, **not yet pushed**. **Next:** push, then on the phone: the brown photo (outlines, reading line, Jelly + Colour render, ≈ 1 unit) and how long "Getting the nail outliner ready…" takes.
+- **Day:** 5 of 12 (Oct 24, 2026). Pushed: reading-error display, Finish picker, still-photo hand-detection retry. Committed, **not yet pushed**: MobileSAM outlines (SlimSAM crashed iPhone Safari) and the **switch from DeepSeek to Claude** for the design reading. **Next:** the user adds `ANTHROPIC_API_KEY` to `.env.local` and Vercel; one real reading locally (Claude is reachable from the Mac); push; phone test of the brown photo (outlines, reading, Jelly + Colour render, ≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
-- **DeepSeek reply format** (Oct 24): first real call returned 200 but a reply our parser rejected (contents unknown: the old error didn't keep it). Now accepts JSON after a `<think>` block or inside prose, `max_tokens` 2000 (was 800, in case thinking ate the budget), and errors log the first 200 chars + `finish_reason`. Confirm on the phone.
+- **Vision model** (Oct 24): switched from DeepSeek to **Claude** (`claude-opus-5-5`, effort `low`, structured outputs). Not yet run for real: needs the user's `ANTHROPIC_API_KEY` in `.env.local` and on Vercel. `DEEPSEEK_API_KEY` can be removed from Vercel.
 - **Router threshold** (Oct 23): Transfer below spec confidence 0.6 (pick confidence averaged with the model's). Tune once real readings come in; maybe too eager with unsure outlines.
 - **Curled-fingers hand pose** (Oct 22): now accepted by the gate (palm side + fingertips folded near their knuckles). Rule set from geometry; confirm live on the phone (free), then one real render to see if YouCam handles it.
 - **Nail outlining** (Oct 22, Oct 24): the colour flood failed on the user's brown-on-brown photo (1 of 5 right). SlimSAM fixed the outlines but crashed iPhone Safari; **MobileSAM** (Oct 24) gives clean outlines on all 3 test photos at ≈ 200 MB. Still to check on a real phone: that it no longer crashes, the download (≈ 19 MB model + 14 MB WASM, ≈ 3 MB compressed, cached afterwards), encode time, and the brown photo (not in `test-output/`).
@@ -286,3 +286,9 @@ The user asked for all the earlier proposals before pushing.
 - Node prototype results: inspo-5/6/7 outlines as good as or cleaner than SlimSAM; the edge-cut thumb on inspo-5 gets no nail-sized guess (flood fallback).
 - `sam.ts` rewritten for the new IO (`samPixels` HWC, `samPrompt`, `samMasks` splits the decoder output); `sam-browser.ts` loads `public/models/mobilesam/{encoder,decoder}.onnx`. SlimSAM files removed. 104 tests; lint, typecheck, build clean. Verified in `dev-mock` (inspo-5, no errors). Test inspiration row deleted; the user's two new hand rows kept.
 - **Not verifiable here:** iPhone memory. 200 MB is in the range phones handle (MediaPipe already runs alongside), but only the phone test will tell.
+
+### Session 5 (cont.), Oct 24, 2026: design reading moved from DeepSeek to Claude
+The user has an Anthropic API key and asked to switch.
+- `src/lib/vision/claude.ts` replaces `deepseek.ts`: `@anthropic-ai/sdk` 1.3.0, `client.beta.messages.parse` with `claude-opus-5-5` (override: `VISION_MODEL`), effort `low` (a short classification; keeps the phone wait short), `max_tokens` 8000, 60 s timeout, 1 retry. **Structured outputs** (`betaZodOutputFormat(readingFormat)`) guarantee the reply's shape, so the parse failure seen with DeepSeek can't recur; `parseReading` still applies the lenient mapping. Server-side refusal fallback on (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`); a refusal or cut-off reply throws a readable error that the picker shows.
+- `reading.ts`: `buildReadingContent` (full photo + labelled crops as base64 JPEG image blocks) replaces the OpenAI-style request; the JSON-extraction workarounds are gone. Env: `ANTHROPIC_API_KEY`, `VISION_MODEL`; mock renamed `VISION_MOCK` (launch config `dev-mock` updated). Health check reports `anthropic`.
+- 105 tests; typecheck, lint and build clean. Mock reading verified end to end in `dev-mock` (inspo-7). `api.anthropic.com` is reachable from the Mac (401 without a key), so real readings can be tested locally. Test inspiration row deleted.

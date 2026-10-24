@@ -191,7 +191,7 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 | Hand landmarks | `@mediapipe/tasks-vision` (browser) |
 | Colour science | `culori` (OKLab, CIELAB, CIEDE2000) |
 | Image processing | `sharp` (server) |
-| Vision model | DeepSeek V4.1 Flash (`deepseek-flash`, OpenAI-compatible, image input), structured JSON validated with zod. Blocked on the user's network: test via Vercel |
+| Vision model | Claude Opus 5.5 (`claude-opus-5-5`, override with `VISION_MODEL`) via `@anthropic-ai/sdk`: one call per inspiration photo, effort `low`, structured outputs (`readingFormat`) so the reply always parses, server-side refusal fallback. Switched from DeepSeek on Oct 24 (its first real reply didn't parse, and Zscaler blocks it locally) |
 | DB / storage / auth | Supabase |
 | Validation | `zod` |
 | Tests | Vitest for spec → payload, colour maths, router, cache keys |
@@ -247,5 +247,5 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 
 - `YOUCAM_API_KEY`: ✅ in `.env.local`
 - Supabase project: URL + anon key + service role key
-- `DEEPSEEK_API_KEY` (vision extraction): ✅ set in `.env.local` and on Vercel
+- `ANTHROPIC_API_KEY` (design reading): the user adds it to `.env.local` and Vercel (Oct 24). `DEEPSEEK_API_KEY` is no longer used
 - Vercel project (GitHub repo connected)

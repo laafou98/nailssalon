@@ -5,10 +5,10 @@ import { currentSessionId } from "@/lib/session";
 import { FINGERS } from "@/lib/spec/types";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getObject } from "@/lib/supabase/storage";
-import { readDesign } from "@/lib/vision/deepseek";
+import { readDesign } from "@/lib/vision/claude";
 import type { CropInput } from "@/lib/vision/reading";
 
-const dataUrl = (bytes: Uint8Array) => `data:image/jpeg;base64,${Buffer.from(bytes).toString("base64")}`;
+const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 /**
  * Design Compiler [C], semantics: the stored inspiration photo plus one crop per
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     if (entry === null) continue;
     const crop = await parseJpegUpload(entry, MAX_CROP_BYTES, 32);
     if (!crop.ok) return Response.json({ error: `${finger} crop: ${crop.error}` }, { status: 400 });
-    crops.push({ finger, url: dataUrl(crop.bytes) });
+    crops.push({ finger, jpegBase64: base64(crop.bytes) });
   }
 
   try {
@@ -47,12 +47,12 @@ export async function POST(request: Request) {
       .eq("kind", "inspo")
       .maybeSingle();
     if (!inspo) return Response.json({ error: "Inspiration photo not found" }, { status: 404 });
-    const photo = dataUrl(await getObject(inspo.path));
+    const photo = base64(await getObject(inspo.path));
     try {
       return Response.json(await readDesign(photo, crops));
     } catch (error) {
       // The vision model's own failure (bad reply, timeout, HTTP error): pass the reason on,
-      // so a phone test shows it. Our messages and DeepSeek's error bodies carry no secrets.
+      // so a phone test shows it. Our messages and the Claude API's error messages carry no secrets.
       console.error("[POST /api/designs/extract]", error);
       return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 502 });
     }

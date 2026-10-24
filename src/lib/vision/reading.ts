@@ -1,8 +1,9 @@
 // Design Compiler [C], semantics: what a vision model reads off an inspiration
 // photo that pixels alone can't tell us (finish, pattern, nail shape and length).
-// Pure: builds the chat request and parses the reply, so both are unit-tested.
+// Pure: builds the request content and parses the reply, so both are unit-tested.
 // Colours never come from the model: tap-to-pick measures them.
 
+import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { TIP_SHAPES, type TipShape } from "@/lib/inspo/design";
 import { LENGTHS } from "@/lib/inspo/pick";
@@ -20,6 +21,20 @@ const LENGTH_VALUE: Record<LengthName, number> = {
 };
 
 const confidence = z.coerce.number().min(0).max(1).catch(0.5);
+
+/**
+ * The reply's exact shape, enforced by Claude's structured outputs. Bounds and
+ * defaults live in the lenient `replySchema` below, not here.
+ */
+export const readingFormat = z.object({
+  is_nail_design: z.boolean(),
+  fingers: z.array(
+    z.object({ finger: z.enum(FINGERS), texture: z.enum(TEXTURES), pattern: z.enum(PATTERNS), confidence: z.number() }),
+  ),
+  shape: z.enum(TIP_SHAPES).nullable(),
+  length: z.enum(LENGTH_NAMES).nullable(),
+  summary: z.string(),
+});
 
 /**
  * The reply, parsed leniently: one bad field (an unknown finish, a shape we
@@ -60,7 +75,7 @@ export interface DesignReading {
   summary: string;
 }
 
-const SYSTEM = `You are a nail technician reading a nail-design inspiration photo for a salon.
+export const SYSTEM = `You are a nail technician reading a nail-design inspiration photo for a salon.
 You get the full photo, then one close-up crop per nail, each labelled with its finger.
 Colours are already measured: never describe colours as hex codes.
 For each crop, decide:
@@ -76,65 +91,32 @@ Then for the set as a whole:
 - shape of the free edge, one of: ${TIP_SHAPES.join(", ")} (coffin or ballerina → square), or null if you can't tell.
 - length, one of: ${LENGTH_NAMES.join(", ")} (short = barely past the fingertip), or null.
 - is_nail_design: false if the photo shows no painted nails at all.
-- summary: one short sentence a client would understand, e.g. "Milky pink jelly with a gold chrome French tip".
-Answer with JSON only, exactly this shape:
-{"is_nail_design": true, "fingers": [{"finger": "thumb", "texture": "cream", "pattern": "solid", "confidence": 0.8}], "shape": "almond", "length": "medium", "summary": "..."}`;
+- summary: one short sentence a client would understand, e.g. "Milky pink jelly with a gold chrome French tip".`;
 
 export interface CropInput {
   finger: Finger;
-  /** data: URL (or any URL the model can read) of the nail crop. */
-  url: string;
+  /** Base64 JPEG of the nail crop. */
+  jpegBase64: string;
 }
 
-/** OpenAI-compatible chat request for DeepSeek's vision model. */
-export function buildReadingRequest(model: string, photoUrl: string, crops: CropInput[]) {
-  const content: ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[] = [
-    { type: "text", text: "Full inspiration photo:" },
-    { type: "image_url", image_url: { url: photoUrl } },
-  ];
-  for (const crop of crops) {
-    content.push({ type: "text", text: `Crop of the ${crop.finger} nail:` });
-    content.push({ type: "image_url", image_url: { url: crop.url } });
-  }
+const jpeg = (data: string): Anthropic.Beta.BetaImageBlockParam => ({
+  type: "image",
+  source: { type: "base64", media_type: "image/jpeg", data },
+});
+
+/** The user turn: the full photo, then each crop labelled with its finger. */
+export function buildReadingContent(photoBase64: string, crops: CropInput[]): Anthropic.Beta.BetaContentBlockParam[] {
+  const content: Anthropic.Beta.BetaContentBlockParam[] = [{ type: "text", text: "Full inspiration photo:" }, jpeg(photoBase64)];
+  for (const crop of crops) content.push({ type: "text", text: `Crop of the ${crop.finger} nail:` }, jpeg(crop.jpegBase64));
   content.push({
     type: "text",
     text: `Read these fingers: ${crops.map((c) => c.finger).join(", ") || "none (describe only the set as a whole)"}.`,
   });
-  return {
-    model,
-    messages: [
-      { role: "system", content: SYSTEM },
-      { role: "user", content },
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0,
-    max_tokens: 2000,
-  };
+  return content;
 }
 
-/**
- * The JSON object in a reply, or undefined. Despite json_object mode, replies may
- * come fenced, after a <think> block, or with a sentence around the object.
- */
-function extractJson(text: string): unknown {
-  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, "");
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  for (const candidate of [cleaned, start >= 0 && end > start ? cleaned.slice(start, end + 1) : null]) {
-    if (candidate === null) continue;
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      // try the next candidate
-    }
-  }
-  return undefined;
-}
-
-/** Parses the model's JSON reply. Fingers it wasn't shown a crop for stay null. */
-export function parseReading(text: string, cropped: Finger[]): DesignReading {
-  const raw = extractJson(text);
-  if (raw === undefined) throw new Error(`The vision model did not answer with JSON: ${JSON.stringify(text.slice(0, 200))}`);
+/** Maps the model's reply onto our scales. Fingers it wasn't shown a crop for stay null. */
+export function parseReading(raw: unknown, cropped: Finger[]): DesignReading {
   const reply = replySchema.parse(raw);
   const byFinger = new Map(reply.fingers.map((f) => [f.finger, f]));
   return {

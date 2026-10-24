@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { solidSpec, designSpecSchema } from "@/lib/spec/types";
-import { applyReading, buildReadingRequest, needsArtwork, parseReading } from "./reading";
+import { applyReading, buildReadingContent, needsArtwork, parseReading, readingFormat } from "./reading";
 
-const reply = (over: object = {}) =>
-  JSON.stringify({
+const reply = (over: object = {}) => ({
     is_nail_design: true,
     fingers: [
       { finger: "thumb", texture: "jelly", pattern: "solid", confidence: 0.9 },
@@ -13,20 +12,20 @@ const reply = (over: object = {}) =>
     length: "long",
     summary: "  Milky jelly with a glitter accent ",
     ...over,
-  });
+});
 
-describe("buildReadingRequest", () => {
-  it("sends the photo, then each crop labelled with its finger, asking for JSON", () => {
-    const req = buildReadingRequest("deepseek-flash", "data:photo", [
-      { finger: "thumb", url: "data:t" },
-      { finger: "ring", url: "data:r" },
+describe("buildReadingContent", () => {
+  it("sends the photo, then each crop labelled with its finger", () => {
+    const content = buildReadingContent("PHOTO", [
+      { finger: "thumb", jpegBase64: "T" },
+      { finger: "ring", jpegBase64: "R" },
     ]);
-    expect(req.model).toBe("deepseek-flash");
-    expect(req.response_format).toEqual({ type: "json_object" });
-    const content = req.messages[1].content as { type: string; text?: string; image_url?: { url: string } }[];
-    expect(content.filter((c) => c.type === "image_url").map((c) => c.image_url!.url)).toEqual(["data:photo", "data:t", "data:r"]);
-    expect(content[2].text).toContain("thumb");
-    expect(content.at(-1)!.text).toContain("thumb, ring");
+    const images = content.flatMap((c) => (c.type === "image" && c.source.type === "base64" ? [c.source] : []));
+    expect(images.map((i) => i.data)).toEqual(["PHOTO", "T", "R"]);
+    expect(images.every((i) => i.media_type === "image/jpeg")).toBe(true);
+    const texts = content.flatMap((c) => (c.type === "text" ? [c.text] : []));
+    expect(texts[1]).toContain("thumb");
+    expect(texts.at(-1)).toContain("thumb, ring");
   });
 });
 
@@ -51,11 +50,17 @@ describe("parseReading", () => {
     expect(parseReading(reply(), []).fingers.every((f) => f === null)).toBe(true);
   });
 
-  it("accepts a fenced reply and rejects non-JSON", () => {
-    expect(parseReading("```json\n" + reply() + "\n```", ["thumb"]).fingers[0]?.texture).toBe("jelly");
-    expect(parseReading("<think>looks glossy</think>Here you go: " + reply() + " Hope it helps.", ["thumb"]).fingers[0]?.texture).toBe("jelly");
-    expect(() => parseReading("Sorry, I can't help", ["thumb"])).toThrow(/JSON/);
-    expect(() => parseReading("", ["thumb"])).toThrow(/JSON/);
+  it("rejects a reply that isn't an object", () => {
+    expect(() => parseReading("Sorry, I can't help", ["thumb"])).toThrow();
+  });
+});
+
+describe("readingFormat", () => {
+  it("is the exact shape asked of Claude: our vocabularies, nullable shape and length", () => {
+    expect(readingFormat.safeParse(reply()).success).toBe(true);
+    expect(readingFormat.safeParse(reply({ shape: null, length: null })).success).toBe(true);
+    expect(readingFormat.safeParse(reply({ shape: "coffin" })).success).toBe(false);
+    expect(readingFormat.safeParse(reply({ fingers: [{ finger: "thumb", texture: "holographic", pattern: "solid", confidence: 1 }] })).success).toBe(false);
   });
 });
 
