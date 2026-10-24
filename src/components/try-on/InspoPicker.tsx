@@ -15,9 +15,11 @@ import {
   pickNail,
   sourceFingers,
   typicalArea,
+  typicalPick,
   withDesigns,
 } from "@/lib/inspo/pick";
 import type { Point } from "@/lib/inspo/region";
+import { nailPromptBox } from "@/lib/inspo/sam";
 import { encodeForSam, samOutline } from "@/lib/inspo/sam-browser";
 import { type EngineChoice, chooseEngine } from "@/lib/render/router";
 import { type DesignSpec, FINGERS, TEXTURES, type Texture, designSpecSchema, solidSpec } from "@/lib/spec/types";
@@ -40,6 +42,9 @@ const OUTLINE: [number, number, number][] = [
   [118, 255, 3],
   [213, 0, 249],
 ];
+
+/** An error as a short reason for the status line (no stack, no secrets). */
+const describe = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 160);
 
 /** First-pass picks per photo, so adding a tap doesn't redo the others. */
 const firstPass = new WeakMap<InspirationImage, Map<string, NailPick | null>>();
@@ -166,6 +171,8 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const fileRef = useRef<Blob | null>(null);
   /** MobileSAM for the current photo: still loading, ready, or unavailable (then the colour flood outlines). */
   const [sam, setSam] = useState<"loading" | "ready" | "failed">("loading");
+  /** Why MobileSAM is unavailable, shown so a rough outline is never mistaken for a model result. */
+  const [samError, setSamError] = useState<string | null>(null);
   /** A tap waiting for its MobileSAM outline: further taps wait too. */
   const [outlining, setOutlining] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -300,12 +307,16 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       setLoaded(next);
       setInspoId(null);
       setSam("loading");
+      setSamError(null);
       // Encoding starts now, so the model is ready by the first tap.
       encodeForSam(next).then(
         () => fileRef.current === file && setSam("ready"),
         (e: unknown) => {
           console.warn("MobileSAM unavailable, using the colour outliner", e);
-          if (fileRef.current === file) setSam("failed");
+          if (fileRef.current === file) {
+            setSam("failed");
+            setSamError(describe(e));
+          }
         },
       );
       uploadInspiration(file).then(
@@ -346,9 +357,15 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     if (sam !== "failed" && !outlines.has(tapKey(t))) {
       setOutlining(true);
       try {
-        outlines.set(tapKey(t), await samOutline(loaded, t, { expectedArea: typicalArea(picks) }));
+        // Once a nail is known, prompt with a box of its size too: a lone tap on a glossy nail gets a fragment or the finger.
+        const typical = typicalPick(picks);
+        const box = typical && nailPromptBox(typical.region.box);
+        const outline = await samOutline(loaded, t, { expectedArea: typical?.region.area }, box);
+        outlines.set(tapKey(t), outline);
+        console.debug("MobileSAM outline", LABELS[taps.length], { area: outline?.mask.reduce((a, b) => a + b, 0) ?? null, score: outline?.score, expectedArea: typical?.region.area, box });
       } catch (err) {
         console.warn("MobileSAM outline failed, using the colour outliner", err);
+        setSamError(describe(err));
       } finally {
         setOutlining(false);
       }
@@ -403,6 +420,10 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   };
 
   const failed = taps.length > 0 && taps[taps.length - 1] !== null && picks[taps.length - 1] === null;
+  /** Fingers whose outline came from the colour flood because MobileSAM had no nail-sized guess (or failed) for that tap. */
+  const flooded = loaded
+    ? taps.flatMap((t, i) => (t && picks[i] && !outlinesFor(loaded.image).get(tapKey(t)) ? [LABELS[i].toLowerCase()] : []))
+    : [];
 
   return (
     <div className="flex flex-col gap-3">
@@ -449,6 +470,17 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
           </div>
           {outlining && <p className="text-sm text-zinc-500" aria-live="polite">{sam === "loading" ? "Getting the nail outliner ready…" : "Outlining…"}</p>}
           {failed && <p className="text-sm text-amber-700">Couldn&apos;t outline a nail there. Undo and tap nearer the middle of the nail.</p>}
+          {sam === "failed" ? (
+            <p className="text-xs text-amber-700" data-testid="outliner-status">
+              The nail outliner (MobileSAM) couldn&apos;t run here{samError ? ` (${samError})` : ""}, so outlines come from the colour outliner and may be rough on nails that match the skin or background.
+            </p>
+          ) : flooded.length > 0 ? (
+            <p className="text-xs text-amber-700" data-testid="outliner-status">
+              MobileSAM found no nail-sized shape under the {flooded.join(", ")} tap{flooded.length > 1 ? "s" : ""}, so {flooded.length > 1 ? "those outlines come" : "that outline comes"} from the colour outliner and may be rough. Undo and tap the middle of the nail to retry.
+            </p>
+          ) : picks.some(Boolean) && sam === "ready" ? (
+            <p className="text-xs text-zinc-500" data-testid="outliner-status">Outlines by MobileSAM.</p>
+          ) : null}
 
           <div className="flex flex-wrap gap-2">
             <button onClick={() => add(null)} disabled={done || outlining} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">

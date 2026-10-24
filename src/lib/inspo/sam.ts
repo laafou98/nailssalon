@@ -16,7 +16,7 @@
 // quantize_dynamic: encoder MatMuls only (quantizing its convolutions made
 // outlines leak onto skin), decoder MatMul/Gemm.
 
-import type { Point } from "./region";
+import type { OrientedBox, Point } from "./region";
 
 /** The encoder's input: the photo drawn with its long side at this (the model pads it square itself). */
 export const SAM_SIDE = 1024;
@@ -39,13 +39,45 @@ export function samPixels(rgba: ArrayLike<number>, width: number, height: number
   return out;
 }
 
+/** A box prompt around the tap: half extents in working pixels. */
+export interface PromptBox {
+  hx: number;
+  hy: number;
+}
+
+/**
+ * The box to prompt with once a nail of this photo is known: the typical nail's
+ * oriented box, a little larger (1.15× along, 1.3× across), axis-aligned. A lone
+ * tap on a glossy nail makes SAM answer with a glare-split fragment or the whole
+ * finger; a box of about the nail's size makes it answer with the nail (Oct 24:
+ * rescued the taps that got only hand-sized guesses on the brown photos, while
+ * a box 1.6× too big leaked down the finger, so it is only used when the lone
+ * tap fails, see sam-browser.ts).
+ */
+export function nailPromptBox(box: OrientedBox): PromptBox {
+  const c = Math.abs(Math.cos(box.angle)), s = Math.abs(Math.sin(box.angle));
+  const length = 1.15 * box.length, width = 1.3 * box.width;
+  return { hx: (c * length + s * width) / 2, hy: (s * length + c * width) / 2 };
+}
+
+/** Whether a guess of this area is close enough to the typical nail (0.6–1.6×) to be kept without a second, boxed prompt. */
+export function nearTypical(area: number, expectedArea: number | undefined): boolean {
+  return expectedArea === undefined || (area >= 0.6 * expectedArea && area <= 1.6 * expectedArea);
+}
+
 /**
  * The tap as the decoder's prompt, in encoder-input pixels: the point (label 1)
- * plus the padding point (0, 0, label −1) SAM's ONNX decoder expects when there's no box.
+ * and either the padding point (0, 0, label −1) SAM's ONNX decoder expects when
+ * there's no box, or the box's corners (labels 2 and 3).
  */
-export function samPrompt(tap: Point, samWidth: number, workWidth: number): { coords: Float32Array; labels: Float32Array } {
+export function samPrompt(tap: Point, samWidth: number, workWidth: number, box?: PromptBox): { coords: Float32Array; labels: Float32Array } {
   const k = samWidth / workWidth;
-  return { coords: new Float32Array([(tap.x + 0.5) * k, (tap.y + 0.5) * k, 0, 0]), labels: new Float32Array([1, -1]) };
+  const x = (tap.x + 0.5) * k, y = (tap.y + 0.5) * k;
+  if (!box) return { coords: new Float32Array([x, y, 0, 0]), labels: new Float32Array([1, -1]) };
+  return {
+    coords: new Float32Array([x, y, x - box.hx * k, y - box.hy * k, x + box.hx * k, y + box.hy * k]),
+    labels: new Float32Array([1, 2, 3]),
+  };
 }
 
 /** The decoder's `masks` (n guesses of logits, already at the working size we asked for) → binary masks. */
@@ -63,26 +95,44 @@ export interface MaskLimits {
   maxAreaFraction?: number;
   /** Smallest plausible nail, working pixels. */
   minArea?: number;
-  /** Typical nail area in this photo (median of the other picks): caps a guess at 2.5× it. */
+  /** Typical nail area in this photo (median of the other picks): a guess must be 0.4–1.8× it. */
   expectedArea?: number;
 }
 
+/** Whether the mask covers the tap or a pixel within 2 px of it (a tap can land on a glare pixel SAM leaves out). */
+function coversTap(mask: Uint8Array, tap: Point, width: number, height: number): boolean {
+  const cx = Math.round(tap.x), cy = Math.round(tap.y);
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++) {
+      const x = cx + dx, y = cy + dy;
+      if (x >= 0 && y >= 0 && x < width && y < height && mask[y * width + x]) return true;
+    }
+  return false;
+}
+
 /**
- * Index of the guess that is the nail, or null when none is plausible: it must
- * contain the tap and have a nail's size; among those, the best predicted IoU.
+ * Index of the guess that is the nail, or null when none is plausible. A guess
+ * must cover the tap and have a nail's size. SAM's guesses nest (part of the
+ * nail, the nail, the finger, the hand), and the finger often scores as well
+ * as the nail, so a plausible guess at least 3× bigger than another plausible
+ * one is taken to be the finger and dropped. Among the rest, the best predicted IoU.
  */
 export function chooseSamMask(masks: Uint8Array[], scores: ArrayLike<number>, tap: Point, width: number, height: number, limits: MaskLimits = {}): number | null {
   let maxArea = width * height * (limits.maxAreaFraction ?? 0.08);
-  if (limits.expectedArea) maxArea = Math.min(maxArea, 2.5 * limits.expectedArea);
-  const minArea = limits.minArea ?? 40;
-  const at = Math.round(tap.y) * width + Math.round(tap.x);
-  let best: number | null = null;
+  let minArea = limits.minArea ?? 40;
+  if (limits.expectedArea) {
+    maxArea = Math.min(maxArea, 1.8 * limits.expectedArea);
+    minArea = Math.max(minArea, 0.4 * limits.expectedArea);
+  }
+  const plausible: { i: number; area: number }[] = [];
   masks.forEach((mask, i) => {
-    if (!mask[at]) return;
+    if (!coversTap(mask, tap, width, height)) return;
     let area = 0;
     for (let p = 0; p < mask.length; p++) area += mask[p];
-    if (area < minArea || area > maxArea) return;
-    if (best === null || scores[i] > scores[best]) best = i;
+    if (area >= minArea && area <= maxArea) plausible.push({ i, area });
   });
+  const nailSized = plausible.filter((c) => !plausible.some((o) => o.area * 3 <= c.area));
+  let best: number | null = null;
+  for (const { i } of nailSized) if (best === null || scores[i] > scores[best]) best = i;
   return best;
 }

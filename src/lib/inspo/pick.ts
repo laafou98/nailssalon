@@ -61,10 +61,15 @@ export function pickNail(img: InspirationImage, tap: Point, expectedArea?: numbe
   return { tap, region, colours, confidence };
 }
 
-/** Median area of the picks so far: nails in one photo are alike, so it bounds the next outline. */
+/** The pick of median area so far: nails in one photo are alike, so its size and shape guide the next outline. */
+export function typicalPick(picks: (NailPick | null)[]): NailPick | undefined {
+  const sorted = picks.filter((p): p is NailPick => p !== null).sort((a, b) => a.region.area - b.region.area);
+  return sorted.length ? sorted[sorted.length >> 1] : undefined;
+}
+
+/** Median area of the picks so far: bounds the next outline. */
 export function typicalArea(picks: (NailPick | null)[]): number | undefined {
-  const areas = picks.filter((p): p is NailPick => p !== null).map((p) => p.region.area).sort((a, b) => a - b);
-  return areas.length ? areas[areas.length >> 1] : undefined;
+  return typicalPick(picks)?.region.area;
 }
 
 /** For each finger, the picked finger whose colours it uses: itself, or the nearest picked one. */

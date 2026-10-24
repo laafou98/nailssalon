@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toLabImage } from "./oklab";
 import { prepareImage, regionFromMask } from "./region";
-import { SAM_SIDE, chooseSamMask, samMasks, samPixels, samPrompt, samSize } from "./sam";
+import { SAM_SIDE, chooseSamMask, nailPromptBox, nearTypical, samMasks, samPixels, samPrompt, samSize } from "./sam";
 import { inEllipse, scene } from "./synthetic.test-helpers";
 
 describe("samPixels / samSize", () => {
@@ -22,6 +22,25 @@ describe("samPrompt / samMasks", () => {
     const { coords, labels } = samPrompt({ x: 10, y: 20 }, 1024, 200);
     [10.5 * 5.12, 20.5 * 5.12, 0, 0].forEach((v, i) => expect(coords[i]).toBeCloseTo(v, 4));
     expect([...labels]).toEqual([1, -1]);
+  });
+
+  it("prompts with the box's corners instead of the padding point when a nail size is known", () => {
+    const { coords, labels } = samPrompt({ x: 10, y: 20 }, 1024, 200, { hx: 2, hy: 4 });
+    [10.5 * 5.12, 20.5 * 5.12, 8.5 * 5.12, 16.5 * 5.12, 12.5 * 5.12, 24.5 * 5.12].forEach((v, i) => expect(coords[i]).toBeCloseTo(v, 4));
+    expect([...labels]).toEqual([1, 2, 3]);
+  });
+
+  it("sizes the box a little over the typical nail, axis-aligned", () => {
+    const upright = nailPromptBox({ cx: 0, cy: 0, angle: Math.PI / 2, length: 60, width: 30 });
+    expect(upright.hx).toBeCloseTo(0.65 * 30, 5);
+    expect(upright.hy).toBeCloseTo(0.575 * 60, 5);
+    const sideways = nailPromptBox({ cx: 0, cy: 0, angle: 0, length: 60, width: 30 });
+    expect(sideways.hx).toBeCloseTo(0.575 * 60, 5);
+    expect(sideways.hy).toBeCloseTo(0.65 * 30, 5);
+    expect(nearTypical(1000, undefined)).toBe(true);
+    expect(nearTypical(1000, 1000)).toBe(true);
+    expect(nearTypical(2000, 1000)).toBe(false);
+    expect(nearTypical(500, 1000)).toBe(false);
   });
 
   it("splits the decoder's logits into one binary mask per guess", () => {
@@ -48,9 +67,24 @@ describe("chooseSamMask", () => {
     expect(chooseSamMask([nail, box(W, 42, 42, 58, 58)], [0.7, 0.9], { x: 50, y: 50 }, W, W)).toBe(1);
   });
 
-  it("refuses guesses that miss the tap or exceed the typical nail size", () => {
+  it("refuses guesses that miss the tap or are far from the typical nail size", () => {
     expect(chooseSamMask([nail], [0.9], { x: 10, y: 10 }, W, W)).toBeNull();
     expect(chooseSamMask([nail], [0.9], { x: 50, y: 50 }, W, W, { expectedArea: 100 })).toBeNull();
+    expect(chooseSamMask([nail], [0.9], { x: 50, y: 50 }, W, W, { expectedArea: 1500 })).toBeNull();
+    expect(chooseSamMask([nail], [0.9], { x: 50, y: 50 }, W, W, { expectedArea: 300 })).toBe(0);
+  });
+
+  it("drops a finger-sized guess when a nail-sized one exists, even if the finger scores higher", () => {
+    const BIG = 200;
+    const nailB = box(BIG, 90, 90, 110, 130); // 800 px
+    const fingerB = box(BIG, 85, 60, 115, 180); // 3600 px: plausible on its own (under 10% of the image)
+    expect(chooseSamMask([fingerB, nailB], [0.95, 0.9], { x: 100, y: 100 }, BIG, BIG, { maxAreaFraction: 0.1 })).toBe(1);
+    expect(chooseSamMask([fingerB], [0.95], { x: 100, y: 100 }, BIG, BIG, { maxAreaFraction: 0.1 })).toBe(0);
+  });
+
+  it("accepts a tap on a glare pixel 2 px outside the mask", () => {
+    expect(chooseSamMask([nail], [0.9], { x: 61, y: 50 }, W, W)).toBe(0);
+    expect(chooseSamMask([nail], [0.9], { x: 63, y: 50 }, W, W)).toBeNull();
   });
 });
 

@@ -7,7 +7,7 @@ import type { InferenceSession, Tensor } from "onnxruntime-web/wasm";
 import type { LoadedInspiration } from "./browser";
 import type { SamOutline } from "./pick";
 import type { Point } from "./region";
-import { type MaskLimits, chooseSamMask, samMasks, samPixels, samPrompt, samSize } from "./sam";
+import { type MaskLimits, type PromptBox, chooseSamMask, nearTypical, samMasks, samPixels, samPrompt, samSize } from "./sam";
 
 const MODEL = "/models/mobilesam";
 
@@ -70,23 +70,34 @@ export function encodeForSam(loaded: LoadedInspiration): Promise<Embedding> {
   return pending;
 }
 
-/** MobileSAM's outline of the nail under a tap (working-image pixels), or null when no guess is nail-sized. */
-export async function samOutline(loaded: LoadedInspiration, tap: Point, limits: MaskLimits = {}): Promise<SamOutline | null> {
+/**
+ * MobileSAM's outline of the nail under a tap (working-image pixels), or null
+ * when no guess is nail-sized. The tap alone is tried first; when that gives
+ * nothing nail-sized, or something far from the typical nail of this photo, the
+ * tap is sent again with `box` (half extents around it, from the typical nail),
+ * which makes the answer far more reliable on glossy nails.
+ */
+export async function samOutline(loaded: LoadedInspiration, tap: Point, limits: MaskLimits = {}, box?: PromptBox): Promise<SamOutline | null> {
   const [{ ort, decoder }, embedding] = await Promise.all([loadRuntime(), encodeForSam(loaded)]);
   const { width, height } = loaded;
-  const prompt = samPrompt(tap, embedding.samWidth, width);
-  const out = await decoder.run({
-    // A copy: the worker takes ownership of input buffers, and the embedding is reused for every tap.
-    image_embeddings: new ort.Tensor("float32", (embedding.embeddings.data as Float32Array).slice(), embedding.embeddings.dims),
-    point_coords: new ort.Tensor("float32", prompt.coords, [1, 2, 2]),
-    point_labels: new ort.Tensor("float32", prompt.labels, [1, 2]),
-    mask_input: new ort.Tensor("float32", new Float32Array(256 * 256), [1, 1, 256, 256]),
-    has_mask_input: new ort.Tensor("float32", new Float32Array([0]), [1]),
-    // Masks come back at this size: the working image.
-    orig_im_size: new ort.Tensor("float32", new Float32Array([height, width]), [2]),
-  });
-  const masks = samMasks(out.masks.data as Float32Array, out.masks.dims[1], width, height);
-  const scores = out.iou_predictions.data as Float32Array;
-  const best = chooseSamMask(masks, scores, tap, width, height, limits);
-  return best === null ? null : { mask: masks[best], score: Math.min(1, Math.max(0, scores[best])) };
+  const decode = async (prompt: PromptBox | undefined): Promise<SamOutline | null> => {
+    const { coords, labels } = samPrompt(tap, embedding.samWidth, width, prompt);
+    const out = await decoder.run({
+      // A copy: the worker takes ownership of input buffers, and the embedding is reused for every tap.
+      image_embeddings: new ort.Tensor("float32", (embedding.embeddings.data as Float32Array).slice(), embedding.embeddings.dims),
+      point_coords: new ort.Tensor("float32", coords, [1, labels.length, 2]),
+      point_labels: new ort.Tensor("float32", labels, [1, labels.length]),
+      mask_input: new ort.Tensor("float32", new Float32Array(256 * 256), [1, 1, 256, 256]),
+      has_mask_input: new ort.Tensor("float32", new Float32Array([0]), [1]),
+      // Masks come back at this size: the working image.
+      orig_im_size: new ort.Tensor("float32", new Float32Array([height, width]), [2]),
+    });
+    const masks = samMasks(out.masks.data as Float32Array, out.masks.dims[1], width, height);
+    const scores = out.iou_predictions.data as Float32Array;
+    const best = chooseSamMask(masks, scores, tap, width, height, limits);
+    return best === null ? null : { mask: masks[best], score: Math.min(1, Math.max(0, scores[best])) };
+  };
+  const alone = await decode(undefined);
+  if (!box || (alone && nearTypical(alone.mask.reduce((a, b) => a + b, 0), limits.expectedArea))) return alone;
+  return (await decode(box)) ?? alone;
 }
