@@ -18,7 +18,7 @@ import {
 } from "@/lib/inspo/pick";
 import type { Point } from "@/lib/inspo/region";
 import { type EngineChoice, chooseEngine } from "@/lib/render/router";
-import { type DesignSpec, FINGERS, type Texture, designSpecSchema, solidSpec } from "@/lib/spec/types";
+import { type DesignSpec, FINGERS, TEXTURES, type Texture, designSpecSchema, solidSpec } from "@/lib/spec/types";
 import { type DesignReading, applyReading, needsArtwork } from "@/lib/vision/reading";
 
 /**
@@ -139,6 +139,8 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   /** Shape and length chosen by the user; null = use the guess from the photo. */
   const [tip, setTip] = useState<TipShape | null>(null);
   const [length, setLength] = useState<number | null>(null);
+  /** Finish chosen by the user for every nail; null = per nail as read from the photo (Cream if unread). */
+  const [finish, setFinish] = useState<Texture | null>(null);
   /** The chosen photo looks like the client's own hand, not a nail design. */
   const [ownHand, setOwnHand] = useState(false);
   /** The photo as stored on the server (vision model input, Nail Transfer reference). */
@@ -160,8 +162,11 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     const draft = picks.length ? draftSpec(allPicks) : null;
     if (!draft) return null;
     const s = read ? applyReading(draft, read, sources) : draft;
-    return inspoId ? designSpecSchema.parse({ ...s, source: { kind: "inspiration", imageId: inspoId } }) : s;
-  }, [picks.length, allPicks, read, sources, inspoId]);
+    const fingers = finish ? Object.fromEntries(FINGERS.map((f) => [f, { ...s.fingers[f], texture: finish }])) : s.fingers;
+    return designSpecSchema.parse({ ...s, fingers, ...(inspoId && { source: { kind: "inspiration", imageId: inspoId } }) });
+  }, [picks.length, allPicks, read, sources, inspoId, finish]);
+  /** The finish the chips highlight: the user's choice, or the one every nail was read as. */
+  const shownFinish = finish ?? (spec && new Set(FINGERS.map((f) => spec.fingers[f].texture)).size === 1 ? spec.fingers.thumb.texture : null);
   const guess = useMemo(() => (loaded ? guessExtensions(picks, loaded.width) : null), [loaded, picks]);
   const shape = tip ?? read?.shape ?? guess?.tip ?? "almond";
   const nailLength = length ?? read?.length ?? guess?.length ?? 1.4;
@@ -188,7 +193,13 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       },
       (e: unknown) => {
         readings.delete(readingKey); // let a later attempt retry
-        if (!cancelled) setReadingByKey((r) => ({ ...r, [readingKey]: { status: "error", error: e instanceof Error ? e.message : String(e) } }));
+        if (cancelled) return;
+        setReadingByKey((r) => ({ ...r, [readingKey]: { status: "error", error: e instanceof Error ? e.message : String(e) } }));
+        if (appliedRef.current !== readingKey) {
+          appliedRef.current = readingKey;
+          // Pattern unknown: colour with a real finish looks more natural than copied pixels (glare and all).
+          setUseDesign(FINGERS.map(() => false));
+        }
       },
     );
     return () => {
@@ -280,6 +291,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       setOwnHand(false);
       setTip(null);
       setLength(null);
+      setFinish(null);
       // Checked after the photo shows, so a slow detector never delays picking.
       looksLikeOwnHand(file).then(setOwnHand, () => setOwnHand(false));
     } catch (e) {
@@ -436,7 +448,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
                   <span className="text-[10px] leading-tight text-zinc-500">
                     {!f ? "–" : !picked ? "copied" : f.confidence < 0.6 ? "unsure" : ""}
                   </span>
-                  {f && read && <span className="text-[10px] leading-tight" data-texture={f.texture}>{TEXTURE_LABELS[f.texture]}</span>}
+                  {f && <span className="text-[10px] leading-tight" data-texture={f.texture}>{TEXTURE_LABELS[f.texture]}</span>}
                   {f && (
                     <button
                       onClick={() => setUseDesign(toggle(useDesign, i))}
@@ -465,8 +477,33 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
                 (reading.value.isNailDesign
                   ? reading.value.summary || "Finish and pattern read."
                   : "This doesn't look like a nail design. Choose a photo that shows painted nails.")}
-              {reading.status === "error" && <span className="text-amber-700">Couldn&apos;t read the finish, so Cream is assumed. You can still try it on.</span>}
+              {reading.status === "error" && <span className="text-amber-700">Couldn&apos;t read the finish from the photo. Choose it below.</span>}
             </p>
+          )}
+
+          {spec && (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-xs font-medium">Finish</p>
+              <div className="flex flex-wrap gap-1.5" aria-label="Finish">
+                {TEXTURES.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setFinish(finish === t ? null : t)}
+                    aria-pressed={shownFinish === t}
+                    className={`rounded-full border px-3 py-1 text-xs ${shownFinish === t ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
+                  >
+                    {TEXTURE_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-500">
+                {finish
+                  ? `${TEXTURE_LABELS[finish]} on every nail. Tap it again to go back to ${read ? "the finish read from the photo" : "Cream"}.`
+                  : read
+                    ? "Read from the photo, per nail. Tap one to use it on every nail."
+                    : "Cream unless you choose another."}
+              </p>
+            </div>
           )}
 
           <div className="flex flex-col gap-2">

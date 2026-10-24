@@ -53,7 +53,9 @@ describe("parseReading", () => {
 
   it("accepts a fenced reply and rejects non-JSON", () => {
     expect(parseReading("```json\n" + reply() + "\n```", ["thumb"]).fingers[0]?.texture).toBe("jelly");
+    expect(parseReading("<think>looks glossy</think>Here you go: " + reply() + " Hope it helps.", ["thumb"]).fingers[0]?.texture).toBe("jelly");
     expect(() => parseReading("Sorry, I can't help", ["thumb"])).toThrow(/JSON/);
+    expect(() => parseReading("", ["thumb"])).toThrow(/JSON/);
   });
 });
 

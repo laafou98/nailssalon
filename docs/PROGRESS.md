@@ -5,17 +5,17 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 in progress (Oct 23, 2026). Day 5 code is complete but **not yet pushed**: **DeepSeek design reading** (finish, pattern, shape, length per nail → spec; plain nails default to Colour, art/French/ombre/cat-eye to Design) and the **render router** (Nail VTO per finger, or YouCam Nail Transfer on the whole photo when the spec is unsure, labelled "approximate"; plus a "Compare" button). Verified with fake YouCam + fake DeepSeek only. **Next:** push, then on the phone: first real DeepSeek call (confirms the `deepseek-flash` model ID), one real Transfer render, and the two length modes.
+- **Day:** 5 of 12 (Oct 24, 2026). Day 5 is pushed and was phone-tested Oct 24: the DeepSeek call reaches the model (model ID fine) but our parser rejected its reply ("did not answer with JSON"); fixed with a more forgiving parser plus a manual **finish picker**, committed but **not yet pushed**. Nail outlining is still the main problem (the user: "finger detection is just bad"). **Next:** push, re-test the reading on the phone (check the Vercel log if it still fails: it now records the reply and its stop reason), then decide on SlimSAM.
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
 - **YouCam units used:** about 6 of 1,000 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
-- **First real DeepSeek call** (Oct 23): only mocked so far (Zscaler blocks it locally). Model ID `deepseek-flash` comes from third-party guides (official Aug 21 note named the now-retired `deepseek-v4-flash-vision-exp`); override with the `DEEPSEEK_MODEL` env var on Vercel if the call fails. Check the summary and per-finger finishes on a real photo.
+- **DeepSeek reply format** (Oct 24): first real call returned 200 but a reply our parser rejected (contents unknown: the old error didn't keep it). Now accepts JSON after a `<think>` block or inside prose, `max_tokens` 2000 (was 800, in case thinking ate the budget), and errors log the first 200 chars + `finish_reason`. Confirm on the phone.
 - **Router threshold** (Oct 23): Transfer below spec confidence 0.6 (pick confidence averaged with the model's). Tune once real readings come in; maybe too eager with unsure outlines.
 - **Curled-fingers hand pose** (Oct 22): now accepted by the gate (palm side + fingertips folded near their knuckles). Rule set from geometry; confirm live on the phone (free), then one real render to see if YouCam handles it.
-- **Nail outlining is the weak link** (Oct 22): pale glitter nails on pale skin/background lose their rims or fail; half-hidden thumbs fail. Proposal: SlimSAM (tap → segment) in the browser, ≈ 14 MB quantized ONNX, self-hosted. Waiting on the user's go-ahead.
+- **Nail outlining is the weak link** (Oct 22, again Oct 24): pale glitter nails on pale skin/background lose their rims or fail; half-hidden thumbs fail. Oct 24 phone test (dark brown nails on brown satin): only the middle nail was right; the pinky outline sat on the background, the thumb and index spilled onto skin, the ring got a sliver, and the skin in those crops made the renders look wrong. Proposal: SlimSAM (tap → segment) in the browser, ≈ 14 MB quantized ONNX, self-hosted. Recommended next; waiting on the user's go-ahead.
 - **Real renders of both length modes** (Day 5): "Keep my length" with the short-nail crop, and "Extensions" (press-on: never rendered for real yet). Check what YouCam's `length` 1.0–2.15 actually looks like and adjust the Short/Medium/Long/Extra long steps.
 - **Product decision (user, Oct 22):** natural length is a feature, not a bug. Keep both modes; "Extensions" is a different salon service and price (feeds the Day 7 quote and the recipe card).
 - **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
@@ -34,7 +34,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
-| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 All built (Oct 22–23); real DeepSeek + Transfer renders to confirm on the phone |
+| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Built and pushed; first real DeepSeek reply failed to parse (fixed Oct 24, to re-test); Transfer render still to confirm |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
@@ -248,3 +248,11 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 
 **Next step:** push (ask first), then on the phone: one inspiration try-on (DeepSeek call, about 1 unit), one Compare (1 unit), then both length modes.
 
+
+### Session 5, Oct 24, 2026: phone test of Day 5, reply parsing, finish picker
+**Phone test (≈ 1 unit):** the user's curled-fingers hand (palm side, accepted by the gate) with a dark-brown almond inspiration photo. Problems: (1) bad outlines (see open items); (2) the render looked fake: skin in the crops (the index came out skin-coloured) and every finger stayed on Design, so the photo's glare was copied as white streaks; (3) "Couldn't read the finish", with no way to choose one. The user found the Vercel log: `The vision model did not answer with JSON`, so the call itself and the `deepseek-flash` ID work.
+
+**Built** (0 units)
+- `reading.ts`: `extractJson` drops `<think>` blocks and fences, then tries the whole reply and the outermost `{…}`; `max_tokens` 2000. `deepseek.ts`: empty replies and parse failures include `finish_reason` and the first 200 chars of the reply in the logged error. 2 new test cases (97 tests).
+- `InspoPicker`: a **Finish** chip row (all 9 textures) below the per-finger list. Default is per nail as read (Cream if unread); tapping a chip puts that finish on every nail, tapping it again goes back. Each finger always shows its finish. When the reading fails, all fingers default to **Colour** (pattern unknown; a real finish looks more natural than copied pixels) and the message says to choose a finish below.
+- Verified with `dev-mock` (inspo-5): the reading shows per-finger finishes, Jelly sets all five, and its hint offers going back. One test inspiration row and its storage object deleted; the user's phone session untouched.

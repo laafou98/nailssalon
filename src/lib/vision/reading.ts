@@ -108,19 +108,33 @@ export function buildReadingRequest(model: string, photoUrl: string, crops: Crop
     ],
     response_format: { type: "json_object" },
     temperature: 0,
-    max_tokens: 800,
+    max_tokens: 2000,
   };
+}
+
+/**
+ * The JSON object in a reply, or undefined. Despite json_object mode, replies may
+ * come fenced, after a <think> block, or with a sentence around the object.
+ */
+function extractJson(text: string): unknown {
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, "");
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  for (const candidate of [cleaned, start >= 0 && end > start ? cleaned.slice(start, end + 1) : null]) {
+    if (candidate === null) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined;
 }
 
 /** Parses the model's JSON reply. Fingers it wasn't shown a crop for stay null. */
 export function parseReading(text: string, cropped: Finger[]): DesignReading {
-  let raw: unknown;
-  try {
-    // Some replies wrap the JSON in a ``` fence despite json_object mode.
-    raw = JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, ""));
-  } catch {
-    throw new Error("The vision model did not answer with JSON");
-  }
+  const raw = extractJson(text);
+  if (raw === undefined) throw new Error(`The vision model did not answer with JSON: ${JSON.stringify(text.slice(0, 200))}`);
   const reply = replySchema.parse(raw);
   const byFinger = new Map(reply.fingers.map((f) => [f.finger, f]));
   return {

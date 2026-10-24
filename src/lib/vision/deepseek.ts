@@ -45,12 +45,20 @@ export async function readDesign(photoUrl: string, crops: CropInput[]): Promise<
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`DeepSeek request failed (${res.status}): ${text.slice(0, 300)}`);
-  let content: unknown;
+  let choice: { message?: { content?: unknown }; finish_reason?: string } | undefined;
   try {
-    content = (JSON.parse(text) as { choices?: { message?: { content?: unknown } }[] }).choices?.[0]?.message?.content;
+    choice = (JSON.parse(text) as { choices?: (typeof choice)[] }).choices?.[0];
   } catch {
     throw new Error(`DeepSeek returned non-JSON (${res.status}): ${text.slice(0, 200)}`);
   }
-  if (typeof content !== "string") throw new Error("DeepSeek returned no message");
-  return parseReading(content, cropped);
+  const content = choice?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error(`DeepSeek returned no message (finish_reason ${choice?.finish_reason ?? "none"})`);
+  }
+  try {
+    return parseReading(content, cropped);
+  } catch (error) {
+    // Keep the stop reason: "length" means the reply was cut off by max_tokens.
+    throw new Error(`${error instanceof Error ? error.message : error} (finish_reason ${choice?.finish_reason ?? "none"})`);
+  }
 }
