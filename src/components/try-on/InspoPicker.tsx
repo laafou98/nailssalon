@@ -44,7 +44,7 @@ const OUTLINE: [number, number, number][] = [
 /** First-pass picks per photo, so adding a tap doesn't redo the others. */
 const firstPass = new WeakMap<InspirationImage, Map<string, NailPick | null>>();
 
-/** SlimSAM's outline per photo and tap (null: no nail-sized guess, so the colour flood is used). */
+/** MobileSAM's outline per photo and tap (null: no nail-sized guess, so the colour flood is used). */
 const samOutlines = new WeakMap<InspirationImage, Map<string, SamOutline | null>>();
 const tapKey = (t: Point) => `${t.x},${t.y}`;
 
@@ -164,9 +164,9 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   /** The reading whose Design/Colour defaults were applied, so a repeat doesn't undo the user's toggles. */
   const appliedRef = useRef<string | null>(null);
   const fileRef = useRef<Blob | null>(null);
-  /** SlimSAM for the current photo: still loading, ready, or unavailable (then the colour flood outlines). */
+  /** MobileSAM for the current photo: still loading, ready, or unavailable (then the colour flood outlines). */
   const [sam, setSam] = useState<"loading" | "ready" | "failed">("loading");
-  /** A tap waiting for its SlimSAM outline: further taps wait too. */
+  /** A tap waiting for its MobileSAM outline: further taps wait too. */
   const [outlining, setOutlining] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -304,7 +304,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       encodeForSam(next).then(
         () => fileRef.current === file && setSam("ready"),
         (e: unknown) => {
-          console.warn("SlimSAM unavailable, using the colour outliner", e);
+          console.warn("MobileSAM unavailable, using the colour outliner", e);
           if (fileRef.current === file) setSam("failed");
         },
       );
@@ -348,7 +348,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       try {
         outlines.set(tapKey(t), await samOutline(loaded, t, { expectedArea: typicalArea(picks) }));
       } catch (err) {
-        console.warn("SlimSAM outline failed, using the colour outliner", err);
+        console.warn("MobileSAM outline failed, using the colour outliner", err);
       } finally {
         setOutlining(false);
       }

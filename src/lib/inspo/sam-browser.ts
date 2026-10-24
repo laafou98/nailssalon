@@ -1,5 +1,5 @@
-// Browser-only side of the SlimSAM nail outliner: loads onnxruntime-web and the
-// self-hosted model (public/models/slimsam, public/ort), encodes each
+// Browser-only side of the MobileSAM nail outliner: loads onnxruntime-web and the
+// self-hosted model (public/models/mobilesam, public/ort), encodes each
 // inspiration photo once, then answers each tap in tens of milliseconds.
 // Everything is lazy: nothing downloads until a photo is chosen.
 
@@ -7,9 +7,9 @@ import type { InferenceSession, Tensor } from "onnxruntime-web/wasm";
 import type { LoadedInspiration } from "./browser";
 import type { SamOutline } from "./pick";
 import type { Point } from "./region";
-import { type MaskLimits, SAM_SIDE, chooseSamMask, samMasks, samPixels, samPoint, samSize } from "./sam";
+import { type MaskLimits, chooseSamMask, samMasks, samPixels, samPrompt, samSize } from "./sam";
 
-const MODEL = "/models/slimsam/onnx";
+const MODEL = "/models/mobilesam";
 
 interface Runtime {
   ort: typeof import("onnxruntime-web/wasm");
@@ -19,8 +19,7 @@ interface Runtime {
 
 interface Embedding {
   embeddings: Tensor;
-  positional: Tensor;
-  /** Width of the SAM input the photo was drawn at. */
+  /** Width of the encoder input the photo was drawn at. */
   samWidth: number;
 }
 
@@ -30,11 +29,11 @@ function loadRuntime(): Promise<Runtime> {
   runtime ??= (async () => {
     const ort = await import("onnxruntime-web/wasm");
     ort.env.wasm.wasmPaths = "/ort/";
-    // Runs inference in a worker, so encoding a photo (a few seconds on a phone) doesn't freeze the page.
+    // Runs inference in a worker, so encoding a photo (a second or two on a phone) doesn't freeze the page.
     ort.env.wasm.proxy = true;
     const [encoder, decoder] = await Promise.all([
-      ort.InferenceSession.create(`${MODEL}/vision_encoder_quantized.onnx`),
-      ort.InferenceSession.create(`${MODEL}/prompt_encoder_mask_decoder_quantized.onnx`),
+      ort.InferenceSession.create(`${MODEL}/encoder.onnx`),
+      ort.InferenceSession.create(`${MODEL}/decoder.onnx`),
     ]);
     return { ort, encoder, decoder };
   })();
@@ -61,9 +60,9 @@ export function encodeForSam(loaded: LoadedInspiration): Promise<Embedding> {
       ctx.drawImage(bitmap, 0, 0, size.width, size.height);
       bitmap.close();
       const { data } = ctx.getImageData(0, 0, size.width, size.height);
-      const pixels = new ort.Tensor("float32", samPixels(data, size.width, size.height), [1, 3, SAM_SIDE, SAM_SIDE]);
-      const out = await encoder.run({ pixel_values: pixels });
-      return { embeddings: out.image_embeddings, positional: out.image_positional_embeddings, samWidth: size.width };
+      const image = new ort.Tensor("float32", samPixels(data, size.width, size.height), [size.height, size.width, 3]);
+      const out = await encoder.run({ input_image: image });
+      return { embeddings: out.image_embeddings, samWidth: size.width };
     })();
     pending.catch(() => embeddings.delete(loaded.file));
     embeddings.set(loaded.file, pending);
@@ -71,19 +70,23 @@ export function encodeForSam(loaded: LoadedInspiration): Promise<Embedding> {
   return pending;
 }
 
-/** SlimSAM's outline of the nail under a tap (working-image pixels), or null when no guess is nail-sized. */
+/** MobileSAM's outline of the nail under a tap (working-image pixels), or null when no guess is nail-sized. */
 export async function samOutline(loaded: LoadedInspiration, tap: Point, limits: MaskLimits = {}): Promise<SamOutline | null> {
   const [{ ort, decoder }, embedding] = await Promise.all([loadRuntime(), encodeForSam(loaded)]);
-  const [x, y] = samPoint(tap, embedding.samWidth, loaded.width);
+  const { width, height } = loaded;
+  const prompt = samPrompt(tap, embedding.samWidth, width);
   const out = await decoder.run({
-    input_points: new ort.Tensor("float32", new Float32Array([x, y]), [1, 1, 1, 2]),
-    input_labels: new ort.Tensor("int64", new BigInt64Array([BigInt(1)]), [1, 1, 1]),
-    // Copies: the worker takes ownership of input buffers, and these are reused for every tap.
+    // A copy: the worker takes ownership of input buffers, and the embedding is reused for every tap.
     image_embeddings: new ort.Tensor("float32", (embedding.embeddings.data as Float32Array).slice(), embedding.embeddings.dims),
-    image_positional_embeddings: new ort.Tensor("float32", (embedding.positional.data as Float32Array).slice(), embedding.positional.dims),
+    point_coords: new ort.Tensor("float32", prompt.coords, [1, 2, 2]),
+    point_labels: new ort.Tensor("float32", prompt.labels, [1, 2]),
+    mask_input: new ort.Tensor("float32", new Float32Array(256 * 256), [1, 1, 256, 256]),
+    has_mask_input: new ort.Tensor("float32", new Float32Array([0]), [1]),
+    // Masks come back at this size: the working image.
+    orig_im_size: new ort.Tensor("float32", new Float32Array([height, width]), [2]),
   });
-  const masks = samMasks(out.pred_masks.data as Float32Array, embedding.samWidth, loaded.width, loaded.height);
-  const scores = out.iou_scores.data as Float32Array;
-  const best = chooseSamMask(masks, scores, tap, loaded.width, loaded.height, limits);
+  const masks = samMasks(out.masks.data as Float32Array, out.masks.dims[1], width, height);
+  const scores = out.iou_predictions.data as Float32Array;
+  const best = chooseSamMask(masks, scores, tap, width, height, limits);
   return best === null ? null : { mask: masks[best], score: Math.min(1, Math.max(0, scores[best])) };
 }

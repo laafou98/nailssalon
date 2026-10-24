@@ -2,7 +2,7 @@
 // loads them from our own origin (no CDN dependency; the version always matches
 // the installed package). Runs before `dev` and `build`.
 // - MediaPipe (hand gate). The hand model (public/mediapipe/hand_landmarker.task) isn't on npm, so it is committed.
-// - onnxruntime-web (SlimSAM nail outlines). The model (public/models/slimsam/) is committed too.
+// - onnxruntime-web (MobileSAM nail outlines). The model (public/models/mobilesam/) is committed too.
 import { cpSync, mkdirSync, readdirSync } from "node:fs";
 
 function copy(from, to, pattern) {

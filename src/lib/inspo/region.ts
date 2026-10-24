@@ -632,7 +632,7 @@ function borderContrast(img: LabImage, mask: Uint8Array): number {
 }
 
 /**
- * A nail region from an outline found elsewhere (SlimSAM): the piece under the
+ * A nail region from an outline found elsewhere (MobileSAM): the piece under the
  * tap, thin strands cut, holes filled and a white French tip merged, measured
  * like the flood's regions so the rest of the picker treats both alike.
  */

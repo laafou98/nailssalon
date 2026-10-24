@@ -39,7 +39,7 @@ export function pickConfidence(region: NailRegion, colours: NailColours, imageAr
   return Math.round((0.35 * shape + 0.15 * size + 0.2 * edge + 0.3 * colour) * 100) / 100;
 }
 
-/** A nail outline found by SlimSAM for this tap, with the model's predicted IoU (0–1). */
+/** A nail outline found by MobileSAM for this tap, with the model's predicted IoU (0–1). */
 export interface SamOutline {
   mask: Uint8Array;
   score: number;
@@ -47,7 +47,7 @@ export interface SamOutline {
 
 /**
  * Outlines and measures the nail under a tap. Null when nothing usable is there.
- * With a SlimSAM outline, that is the nail (its score counts for half the
+ * With a MobileSAM outline, that is the nail (its score counts for half the
  * confidence); without one, the colour flood finds it.
  */
 export function pickNail(img: InspirationImage, tap: Point, expectedArea?: number, sam?: SamOutline): NailPick | null {

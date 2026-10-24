@@ -1,43 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { toLabImage } from "./oklab";
 import { prepareImage, regionFromMask } from "./region";
-import { SAM_SIDE, chooseSamMask, samMasks, samPixels, samPoint, samSize } from "./sam";
+import { SAM_SIDE, chooseSamMask, samMasks, samPixels, samPrompt, samSize } from "./sam";
 import { inEllipse, scene } from "./synthetic.test-helpers";
 
-const area = (m: Uint8Array) => m.reduce((a, b) => a + b, 0);
-
-describe("samPixels", () => {
-  it("normalises per channel and pads right and bottom with zeros", () => {
-    const rgba = new Uint8ClampedArray([255, 0, 124, 255, 0, 0, 0, 255]); // 2×1
-    const t = samPixels(rgba, 2, 1);
-    const plane = SAM_SIDE * SAM_SIDE;
-    expect(t.length).toBe(3 * plane);
-    expect(t[0]).toBeCloseTo((1 - 0.485) / 0.229, 4);
-    expect(t[plane]).toBeCloseTo((0 - 0.456) / 0.224, 4);
-    expect(t[2 * plane]).toBeCloseTo((124 / 255 - 0.406) / 0.225, 4);
-    expect(t[2]).toBe(0); // padding
-    expect(t[SAM_SIDE]).toBe(0);
+describe("samPixels / samSize", () => {
+  it("packs RGBA into height × width × RGB at 0–255", () => {
+    const rgba = new Uint8ClampedArray([255, 0, 124, 255, 1, 2, 3, 128]); // 2×1
+    expect([...samPixels(rgba, 2, 1)]).toEqual([255, 0, 124, 1, 2, 3]);
+    expect(() => samPixels(new Uint8ClampedArray(4), 2000, 1)).toThrow();
   });
 
   it("sizes the input to a 1024 long side", () => {
     expect(samSize(736, 1104)).toEqual({ width: 683, height: 1024 });
-    expect(() => samPixels(new Uint8ClampedArray(4), 2000, 1)).toThrow();
+    expect(samSize(2000, 1000)).toEqual({ width: SAM_SIDE, height: 512 });
   });
 });
 
-describe("samMasks / samPoint", () => {
-  it("maps the 256² logits over the padded input onto the working image", () => {
-    // Working 200×100 drawn into SAM at 1024×512: one working pixel = 5.12 SAM px = 1.28 mask cells.
-    const logits = new Float32Array(3 * 256 * 256).fill(-1);
-    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) logits[y * 256 + x] = 5; // guess 0: top-left 256² of 1024²
-    const [m0, m1] = samMasks(logits, 1024, 200, 100);
-    expect(m0.length).toBe(200 * 100);
-    expect(m0[10 * 200 + 10]).toBe(1);
-    expect(m0[60 * 200 + 10]).toBe(0);
-    expect(area(m0)).toBeGreaterThan(48 * 48);
-    expect(area(m0)).toBeLessThan(52 * 52);
-    expect(area(m1)).toBe(0);
-    expect(samPoint({ x: 10, y: 20 }, 1024, 200)).toEqual([10.5 * 5.12, 20.5 * 5.12]);
+describe("samPrompt / samMasks", () => {
+  it("scales the tap to the encoder input and adds SAM's padding point", () => {
+    const { coords, labels } = samPrompt({ x: 10, y: 20 }, 1024, 200);
+    [10.5 * 5.12, 20.5 * 5.12, 0, 0].forEach((v, i) => expect(coords[i]).toBeCloseTo(v, 4));
+    expect([...labels]).toEqual([1, -1]);
+  });
+
+  it("splits the decoder's logits into one binary mask per guess", () => {
+    const logits = new Float32Array([1, -1, 0, 2, /* guess 2 */ -3, 4, 5, -6]);
+    const [a, b] = samMasks(logits, 2, 2, 2);
+    expect([...a]).toEqual([1, 0, 0, 1]);
+    expect([...b]).toEqual([0, 1, 1, 0]);
   });
 });
 
