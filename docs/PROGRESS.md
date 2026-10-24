@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 (Oct 24, 2026). Pushed: MobileSAM outlines, the switch from DeepSeek to Claude for the design reading. Committed, **not yet pushed**: outliner status line, stricter mask choice, box prompt (see the last session entry). Pushed and **phone-confirmed**: MobileSAM outlines all 5 nails of the brown photo on the user's iPhone and the Claude reading works. **Next:** a Jelly + Colour render of it (≈ 1 unit), then the remaining outliner limits (diagonal nails, marble art, half-hidden thumb first).
+- **Day:** 5 of 12 (Oct 24, 2026). Pushed: MobileSAM outlines, the switch from DeepSeek to Claude for the design reading. Committed, **not yet pushed**: outliner status line, stricter mask choice, box prompt (see the last session entry). Committed, **not yet pushed**: automatic nail detection (Claude locates the nails, the picker fills the taps), finger swapping, smooth outlines. **Next:** push; phone test of the automatic picks on the brown photo and a two-hand photo, then a render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -310,3 +310,19 @@ The user has an Anthropic API key and asked to switch.
 **Phone test (after the push):** iPhone Safari, "Outlines by MobileSAM", 5/5 nails on the brown photo, reading shown per finger. The earlier bad screenshot was indeed the flood-only build.
 
 **Known limits:** diagonal nails get a loose axis-aligned box; smoke/marble art still fragments (SAM follows the pattern); a half-hidden thumb picked first sets a too-small "typical" size (inspo-11: ring and pinky rejected as 3.4× it). Possible next steps: let the user tap tip and cuticle for a box, or take the median only after three picks.
+
+### Session 7, Oct 24, 2026: automatic nail detection, finger swap, smooth outlines
+The user asked whether nails could be found automatically on upload (with a way to fix a wrong finger) and for the jagged outlines to be smoothed.
+
+**Gate first:** Claude (`claude-opus-5-5`, effort low) was asked for each nail's centre and finger on the 4 test photos (`test-output/locate.mjs`, git-ignored). All 24 nails got a point inside the painted surface, finger names plausible, two hands told apart (inspo-9 and inspo-10 report both hands), 3–11 s per photo, ≈ 2k input tokens. MediaPipe was ruled out (it finds no hand in inspiration close-ups, Oct 21) and a SAM point grid would need geometry to name fingers.
+
+**Built** (0 units; 116 tests, typecheck, lint, build clean)
+- `src/lib/vision/locate.ts` (pure, 3 tests): the structured-output format (hand number, finger, pixel centre, full/partial/hidden, confidence), `parseLocations` (→ fractions of the photo, hidden and out-of-frame dropped), `chooseHand` (most fully visible nails, then mean confidence; one entry per finger). `locateNails` in `claude.ts` (mock finds nothing, so free local tests stay manual). `POST /api/designs/locate` `{ inspoImageId }` → `NailLocations`.
+- **Suggested picks** (`InspoPicker`): once the photo is stored and the outliner is ready, the picker asks for the locations and fills the fingers not yet tapped, outlining each like a tap (fully visible nails first, so a half-hidden thumb doesn't set the typical size). Once per photo; taps made meanwhile win; status line "Finding the nails in the photo…" / "All five nails found automatically. Check the labels…" / "Couldn't find the nails automatically (reason). Tap them instead."
+- **Swap two fingers**: a button under the finger list enters swap mode; tapping a finger swaps the two taps (and their Design/Flip settings), for a nail detected as the wrong finger.
+- **Smooth outlines** (`src/lib/inspo/contour.ts`, 4 tests): the mask boundary is traced (marching squares, largest loop), thinned, rounded twice (Chaikin) and drawn as an anti-aliased path on a 3× canvas instead of a pixel edge. The cut-out PNGs already blend their edge bilinearly and were left alone.
+- `typicalPick` now needs two picks: a lone first pick was a 441 px glare fragment of the cut-off thumb on inspo-9 and shrank the index's size window so it fell to the flood.
+
+**Verified** (`dev-live`, real Claude, no renders, phone size, temporary page deleted): inspo-9 (two hands) → all five found and outlined by MobileSAM in 11 s, labels right, swap thumb↔index moved the labels and colours; outlines smooth. Test inspiration row and file deleted.
+
+**Known limits:** a cut-off thumb still gets a small fragment (SAM, not detection); the diagonal-nail box leak remains (ring on inspo-9); a two-hand photo gets the hand with most full nails, the other needs manual taps; detection adds ≈ 5–12 s and a few cents per photo.

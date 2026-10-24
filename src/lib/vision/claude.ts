@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { serverEnv } from "@/lib/env";
 import { FINGERS } from "@/lib/spec/types";
+import { type NailLocations, locateFormat, locateSystem, parseLocations } from "./locate";
 import { type CropInput, type DesignReading, SYSTEM, buildReadingContent, parseReading, readingFormat } from "./reading";
 
 /**
@@ -56,4 +57,38 @@ export async function readDesign(photoBase64: string, crops: CropInput[]): Promi
   if (response.stop_reason === "max_tokens") throw new Error("Claude's reading was cut off (max_tokens)");
   if (!response.parsed_output) throw new Error(`Claude's reply didn't match the reading format (stop: ${response.stop_reason})`);
   return parseReading(response.parsed_output, cropped);
+}
+
+/**
+ * Automatic nail detection: every visible nail's finger, hand and centre in the
+ * stored inspiration photo (`width` × `height`). The mock finds nothing, so the
+ * manual taps are what free local tests exercise.
+ */
+export async function locateNails(photoBase64: string, width: number, height: number): Promise<NailLocations> {
+  if (mockEnabled()) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    return { handsVisible: 0, nails: [] };
+  }
+  const response = await anthropic().beta.messages.parse({
+    model: serverEnv("VISION_MODEL"),
+    max_tokens: 4000,
+    system: locateSystem(width, height),
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: photoBase64 } },
+          { type: "text", text: "Locate every fingernail." },
+        ],
+      },
+    ],
+    output_config: { effort: "low", format: betaZodOutputFormat(locateFormat) },
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+  });
+  if (response.stop_reason === "refusal") {
+    throw new Error(`Claude declined to look at this photo (${response.stop_details?.category ?? "no category"})`);
+  }
+  if (!response.parsed_output) throw new Error(`Claude's reply didn't match the nail-location format (stop: ${response.stop_reason})`);
+  return parseLocations(response.parsed_output, width, height);
 }

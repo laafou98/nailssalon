@@ -18,11 +18,13 @@ import {
   typicalPick,
   withDesigns,
 } from "@/lib/inspo/pick";
+import { smoothOutline } from "@/lib/inspo/contour";
 import type { Point } from "@/lib/inspo/region";
 import { nailPromptBox } from "@/lib/inspo/sam";
 import { encodeForSam, samOutline } from "@/lib/inspo/sam-browser";
 import { type EngineChoice, chooseEngine } from "@/lib/render/router";
 import { type DesignSpec, FINGERS, TEXTURES, type Texture, designSpecSchema, solidSpec } from "@/lib/spec/types";
+import { type NailLocations, chooseHand } from "@/lib/vision/locate";
 import { type DesignReading, applyReading, needsArtwork } from "@/lib/vision/reading";
 
 /**
@@ -57,6 +59,27 @@ function outlinesFor(image: InspirationImage): Map<string, SamOutline | null> {
   let map = samOutlines.get(image);
   if (!map) samOutlines.set(image, (map = new Map()));
   return map;
+}
+
+/** Finds and caches the MobileSAM outline for a tap, with a box of the typical nail's size once one is known. */
+async function outlineTap(loaded: LoadedInspiration, t: Point, picksSoFar: (NailPick | null)[], label: string): Promise<void> {
+  const outlines = outlinesFor(loaded.image);
+  if (outlines.has(tapKey(t))) return;
+  const typical = typicalPick(picksSoFar);
+  const box = typical && nailPromptBox(typical.region.box);
+  const outline = await samOutline(loaded, t, { expectedArea: typical?.region.area }, box);
+  outlines.set(tapKey(t), outline);
+  console.debug("MobileSAM outline", label, { area: outline?.mask.reduce((a, b) => a + b, 0) ?? null, score: outline?.score, expectedArea: typical?.region.area, box });
+}
+
+/** Photos whose nails were already suggested automatically (once per photo: after an Undo the user is tapping by hand). */
+const suggested = new WeakSet<InspirationImage>();
+
+async function requestLocations(inspoId: string): Promise<NailLocations> {
+  const res = await fetch("/api/designs/locate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inspoImageId: inspoId }) });
+  const body = (await res.json().catch(() => null)) as (NailLocations & { error?: string }) | null;
+  if (!res.ok || !body) throw new Error(body?.error ?? `HTTP ${res.status}`);
+  return body;
 }
 
 /** Cut-out PNGs per pick, orientation and length mode, so re-rendering the list doesn't redo them. */
@@ -175,6 +198,15 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const [samError, setSamError] = useState<string | null>(null);
   /** A tap waiting for its MobileSAM outline: further taps wait too. */
   const [outlining, setOutlining] = useState(false);
+  /** Automatic nail detection for the current photo. */
+  const [finding, setFinding] = useState<{ status: "idle" | "finding" | "done" | "failed"; count?: number; error?: string }>({ status: "idle" });
+  /** Swapping two finger labels: the first finger chosen, if any. */
+  const [swapFrom, setSwapFrom] = useState<number | null>(null);
+  /** The taps as of the latest render, for the detection effect (which must not overwrite taps made meanwhile). */
+  const tapsRef = useRef<(Point | null)[]>([]);
+  useEffect(() => {
+    tapsRef.current = taps;
+  }, [taps]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const picks = useMemo(() => (loaded ? pickAll(loaded.image, taps) : []), [loaded, taps]);
@@ -197,6 +229,66 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const shape = tip ?? read?.shape ?? guess?.tip ?? "almond";
   const nailLength = length ?? read?.length ?? guess?.length ?? 1.4;
   const approximate = spec !== null && chooseEngine(spec) === "nail_transfer";
+
+  // Automatic nail detection: once the photo is stored, the vision model names and locates the nails,
+  // and the fingers not yet tapped are filled in (outlined like taps). Once per photo; the user corrects by Undo, retap or Swap.
+  useEffect(() => {
+    if (!loaded || !inspoId || sam === "loading" || suggested.has(loaded.image) || tapsRef.current.length >= FINGERS.length) return;
+    suggested.add(loaded.image);
+    let cancelled = false;
+    setFinding({ status: "finding" });
+    (async () => {
+      try {
+        const hand = chooseHand(await requestLocations(inspoId));
+        if (cancelled) return;
+        const from = tapsRef.current.length;
+        const pending = FINGERS.map((_, i) => i).filter((i) => i >= from);
+        const tapFor = (i: number) => (hand[i] ? { x: Math.round(hand[i]!.x * loaded.width), y: Math.round(hand[i]!.y * loaded.height) } : null);
+        // Fully visible nails are outlined first: they set the typical nail size that guides the partial ones (an edge-on thumb).
+        const order = [...pending.filter((i) => hand[i]?.visible === "full"), ...pending.filter((i) => hand[i] && hand[i]!.visible !== "full")];
+        const done: (Point | null)[] = [...tapsRef.current];
+        for (const i of order) {
+          const t = tapFor(i)!;
+          if (sam !== "failed") {
+            setOutlining(true);
+            try {
+              await outlineTap(loaded, t, pickAll(loaded.image, done), `${LABELS[i]} (auto)`);
+            } catch (err) {
+              console.warn("MobileSAM outline failed, using the colour outliner", err);
+            } finally {
+              setOutlining(false);
+            }
+          }
+          if (cancelled || tapsRef.current.length !== from) return; // the user tapped meanwhile: their taps win
+          done.push(t);
+        }
+        const filled = [...tapsRef.current, ...pending.map(tapFor)];
+        const count = pending.filter((i) => hand[i]).length;
+        if (count === 0) {
+          setFinding({ status: "failed", error: "no nails found" });
+          return;
+        }
+        setTaps(filled);
+        setRedo([]);
+        setFinding({ status: "done", count });
+      } catch (e) {
+        if (!cancelled) setFinding({ status: "failed", error: e instanceof Error ? e.message : String(e) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, inspoId, sam]);
+
+  /** Swaps two fingers' taps (and their per-finger settings), for a nail detected as the wrong finger. */
+  const swapFingers = (i: number, j: number) => {
+    if (i === j || i >= taps.length || j >= taps.length) return;
+    const swap = <T,>(arr: T[]) => arr.map((v, k) => (k === i ? arr[j] : k === j ? arr[i] : v));
+    setTaps(swap(taps));
+    setFlipped(swap(flipped));
+    setUseDesign(swap(useDesign));
+    setRedo([]);
+  };
 
   // Once all five are picked: read finish, pattern, shape and length (vision model, no YouCam units).
   useEffect(() => {
@@ -264,22 +356,27 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     const canvas = canvasRef.current;
     if (!canvas || !loaded) return;
     const { width: w, height: h } = loaded;
-    canvas.width = w;
-    canvas.height = h;
+    // Drawn at 3× the working resolution as smooth, anti-aliased paths: a mask's pixel edge would show as a staircase on the phone.
+    const S = 3;
+    canvas.width = w * S;
+    canvas.height = h * S;
     const ctx = canvas.getContext("2d")!;
-    const overlay = ctx.createImageData(w, h);
+    ctx.scale(S, S);
+    ctx.lineJoin = "round";
     picks.forEach((pick, finger) => {
       if (!pick) return;
       const [r, g, b] = OUTLINE[finger];
-      const m = pick.region.mask;
-      for (let p = 0; p < m.length; p++) {
-        if (!m[p]) continue;
-        const x = p % w;
-        const edge = x === 0 || x === w - 1 || !m[p - 1] || !m[p + 1] || !m[p - w] || !m[p + w];
-        overlay.data.set([r, g, b, edge ? 255 : 60], p * 4);
-      }
+      const outline = smoothOutline(pick.region.mask, w, h);
+      if (outline.length < 3) return;
+      ctx.beginPath();
+      outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${r},${g},${b},0.24)`;
+      ctx.fill();
+      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = `rgb(${r},${g},${b})`;
+      ctx.stroke();
     });
-    ctx.putImageData(overlay, 0, 0);
     ctx.font = "bold 13px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -308,6 +405,8 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       setInspoId(null);
       setSam("loading");
       setSamError(null);
+      setFinding({ status: "idle" });
+      setSwapFrom(null);
       // Encoding starts now, so the model is ready by the first tap.
       encodeForSam(next).then(
         () => fileRef.current === file && setSam("ready"),
@@ -357,12 +456,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     if (sam !== "failed" && !outlines.has(tapKey(t))) {
       setOutlining(true);
       try {
-        // Once a nail is known, prompt with a box of its size too: a lone tap on a glossy nail gets a fragment or the finger.
-        const typical = typicalPick(picks);
-        const box = typical && nailPromptBox(typical.region.box);
-        const outline = await samOutline(loaded, t, { expectedArea: typical?.region.area }, box);
-        outlines.set(tapKey(t), outline);
-        console.debug("MobileSAM outline", LABELS[taps.length], { area: outline?.mask.reduce((a, b) => a + b, 0) ?? null, score: outline?.score, expectedArea: typical?.region.area, box });
+        await outlineTap(loaded, t, picks, LABELS[taps.length]);
       } catch (err) {
         console.warn("MobileSAM outline failed, using the colour outliner", err);
         setSamError(describe(err));
@@ -468,7 +562,14 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               aria-label="Tap the nails in finger order"
             />
           </div>
-          {outlining && <p className="text-sm text-zinc-500" aria-live="polite">{sam === "loading" ? "Getting the nail outliner ready…" : "Outlining…"}</p>}
+          {finding.status === "finding" && <p className="text-sm text-zinc-500" aria-live="polite" data-testid="finding">Finding the nails in the photo… (you can also tap them)</p>}
+          {finding.status === "done" && (
+            <p className="text-sm text-zinc-500" data-testid="finding">
+              {finding.count === FINGERS.length ? "All five nails found automatically." : `${finding.count} nails found automatically.`} Check the labels: Undo to retap one, or swap two fingers below.
+            </p>
+          )}
+          {finding.status === "failed" && <p className="text-sm text-zinc-500" data-testid="finding">Couldn&apos;t find the nails automatically ({finding.error}). Tap them instead.</p>}
+          {outlining && finding.status !== "finding" && <p className="text-sm text-zinc-500" aria-live="polite">{sam === "loading" ? "Getting the nail outliner ready…" : "Outlining…"}</p>}
           {failed && <p className="text-sm text-amber-700">Couldn&apos;t outline a nail there. Undo and tap nearer the middle of the nail.</p>}
           {sam === "failed" ? (
             <p className="text-xs text-amber-700" data-testid="outliner-status">
@@ -503,8 +604,17 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               const preview = from !== null ? previews[from] : null;
               const showDesign = useDesign[i] && preview;
               return (
-                <li key={finger} className="flex flex-col items-center gap-1 text-center" data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined}>
-                  <div className="relative flex h-14 items-center">
+                <li key={finger} className={`flex flex-col items-center gap-1 rounded-lg text-center ${swapFrom === i ? "bg-amber-500/20" : ""}`} data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined}>
+                  <div
+                    className="relative flex h-14 items-center"
+                    role={swapFrom !== null && i < taps.length ? "button" : undefined}
+                    aria-label={swapFrom !== null ? `Swap with ${LABELS[i].toLowerCase()}` : undefined}
+                    onClick={() => {
+                      if (swapFrom === null || i >= taps.length) return;
+                      swapFingers(swapFrom, i);
+                      setSwapFrom(null);
+                    }}
+                  >
                     {showDesign ? (
                       // eslint-disable-next-line @next/next/no-img-element -- local blob URL
                       <img src={preview} alt={`${LABELS[i]} nail design`} className={`h-14 w-7 rounded-full border object-cover ${picked ? "border-zinc-400" : "border-dashed border-zinc-400 opacity-60"}`} />
@@ -542,6 +652,20 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               );
             })}
           </ul>
+          {taps.filter(Boolean).length >= 2 && (
+            <div className="flex items-center gap-2 text-xs">
+              {swapFrom === null ? (
+                <button onClick={() => setSwapFrom(taps.findIndex(Boolean))} className="rounded-full border border-zinc-300 px-3 py-1 dark:border-zinc-700" data-testid="swap">
+                  Swap two fingers
+                </button>
+              ) : (
+                <>
+                  <span className="text-amber-700">Now tap the finger to swap {LABELS[swapFrom]} with.</span>
+                  <button onClick={() => setSwapFrom(null)} className="underline">Cancel</button>
+                </>
+              )}
+            </div>
+          )}
           <p className="text-xs text-zinc-500">
             &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
           </p>

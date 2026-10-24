@@ -61,10 +61,14 @@ export function pickNail(img: InspirationImage, tap: Point, expectedArea?: numbe
   return { tap, region, colours, confidence };
 }
 
-/** The pick of median area so far: nails in one photo are alike, so its size and shape guide the next outline. */
+/**
+ * The pick of median area so far: nails in one photo are alike, so its size and
+ * shape guide the next outline. Needs two picks: a lone first pick is too often
+ * a half-hidden thumb (or a glare fragment of it) and would shrink every later nail.
+ */
 export function typicalPick(picks: (NailPick | null)[]): NailPick | undefined {
   const sorted = picks.filter((p): p is NailPick => p !== null).sort((a, b) => a.region.area - b.region.area);
-  return sorted.length ? sorted[sorted.length >> 1] : undefined;
+  return sorted.length >= 2 ? sorted[sorted.length >> 1] : undefined;
 }
 
 /** Median area of the picks so far: bounds the next outline. */
