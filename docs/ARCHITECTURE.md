@@ -14,7 +14,7 @@ YouCam renders. We do the work around it: hand-photo gating, per-finger design e
 │   └─► [A] Hand Quality Gate  (MediaPipe HandLandmarker, WASM, free)        │
 │          one hand · palm ≥ 50% · nails in frame · blur · exposure          │
 │   └─► [B] Tap-to-pick nail crops on the inspiration photo                  │
-│          tap thumb → pinky · OKLab region flood · k-means colours          │
+│          tap thumb → pinky · SlimSAM outline · k-means colours             │
 │   └─► Spec editor UI (shape, length, colour, finish per finger)            │
 └───────────────┬────────────────────────────────────────────────────────────┘
                 │ HTTPS (Next.js route handlers; YouCam key never leaves server)
@@ -98,6 +98,8 @@ interface FingerSpec {
 
 ### [B] Nail crops (browser)
 > **Changed Oct 21:** MediaPipe can't find hands in real inspiration photos, so inspiration photos use **tap-to-pick** (`src/lib/inspo/`): the user taps the nails thumb → pinky, each tap is outlined by an OKLab region flood and measured with k-means. The landmark approach below still applies to the client's own hand photo.
+>
+> **Changed Oct 24:** each tap is now outlined by **SlimSAM** (Segment Anything distilled, `Xenova/slimsam-77-uniform` quantized, 8.9 + 4.9 MB, Apache-2.0) running in the browser on onnxruntime-web in a worker (`sam.ts` pure, `sam-browser.ts`). The photo is encoded once when chosen (≈ 0.6 s on a Mac, a few seconds on a phone); each tap is a ≈ 20 ms decoder run. Of SAM's three guesses, the best-scored one that contains the tap and is nail-sized (≤ 8% of the image, ≤ 2.5× the median of the other picks) wins; then the region is cleaned up and a white French tip merged (`regionFromMask`). Confidence = mean of SAM's predicted IoU and the measured outline score. The OKLab flood stays as the fallback when the model can't load or no guess fits. Model and WASM are self-hosted (`public/models/slimsam/` committed, `public/ort/` copied by `scripts/copy-wasm.mjs`).
 
 Original plan (landmark-guided):
 The key technique. Nail Transfer shuffles designs across fingers. We avoid that by locating each finger explicitly.

@@ -33,6 +33,17 @@
         "dev"
       ],
       "port": 3000
+    },
+    {
+      "name": "prod",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "NODE_USE_ENV_PROXY=1",
+        "npm",
+        "run",
+        "start"
+      ],
+      "port": 3000
     }
   ]
 }

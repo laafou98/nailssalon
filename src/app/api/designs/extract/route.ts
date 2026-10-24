@@ -47,8 +47,15 @@ export async function POST(request: Request) {
       .eq("kind", "inspo")
       .maybeSingle();
     if (!inspo) return Response.json({ error: "Inspiration photo not found" }, { status: 404 });
-    const reading = await readDesign(dataUrl(await getObject(inspo.path)), crops);
-    return Response.json(reading);
+    const photo = dataUrl(await getObject(inspo.path));
+    try {
+      return Response.json(await readDesign(photo, crops));
+    } catch (error) {
+      // The vision model's own failure (bad reply, timeout, HTTP error): pass the reason on,
+      // so a phone test shows it. Our messages and DeepSeek's error bodies carry no secrets.
+      console.error("[POST /api/designs/extract]", error);
+      return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 502 });
+    }
   } catch (error) {
     return errorResponse(error, "POST /api/designs/extract");
   }

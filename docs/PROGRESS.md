@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 (Oct 24, 2026). Day 5 is pushed and was phone-tested Oct 24: the DeepSeek call reaches the model (model ID fine) but our parser rejected its reply ("did not answer with JSON"); fixed with a more forgiving parser plus a manual **finish picker**, committed but **not yet pushed**. Nail outlining is still the main problem (the user: "finger detection is just bad"). **Next:** push, re-test the reading on the phone (check the Vercel log if it still fails: it now records the reply and its stop reason), then decide on SlimSAM.
+- **Day:** 5 of 12 (Oct 24, 2026). After the Oct 24 phone test, three fixes are committed but **not yet pushed**: (1) forgiving DeepSeek reply parsing, with the real reason shown in the app when reading fails; (2) a manual **Finish** picker, plus Colour by default when the reading fails; (3) **SlimSAM nail outlines** in the browser, replacing the colour flood (kept as fallback). **Next:** push, then on the phone: the brown photo again (outlines, reading line, Jelly + Colour render, ≈ 1 unit), and time the first "Getting the nail outliner ready…".
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -15,7 +15,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **DeepSeek reply format** (Oct 24): first real call returned 200 but a reply our parser rejected (contents unknown: the old error didn't keep it). Now accepts JSON after a `<think>` block or inside prose, `max_tokens` 2000 (was 800, in case thinking ate the budget), and errors log the first 200 chars + `finish_reason`. Confirm on the phone.
 - **Router threshold** (Oct 23): Transfer below spec confidence 0.6 (pick confidence averaged with the model's). Tune once real readings come in; maybe too eager with unsure outlines.
 - **Curled-fingers hand pose** (Oct 22): now accepted by the gate (palm side + fingertips folded near their knuckles). Rule set from geometry; confirm live on the phone (free), then one real render to see if YouCam handles it.
-- **Nail outlining is the weak link** (Oct 22, again Oct 24): pale glitter nails on pale skin/background lose their rims or fail; half-hidden thumbs fail. Oct 24 phone test (dark brown nails on brown satin): only the middle nail was right; the pinky outline sat on the background, the thumb and index spilled onto skin, the ring got a sliver, and the skin in those crops made the renders look wrong. Proposal: SlimSAM (tap → segment) in the browser, ≈ 14 MB quantized ONNX, self-hosted. Recommended next; waiting on the user's go-ahead.
+- **Nail outlining** (Oct 22, Oct 24): the colour flood failed on the user's brown-on-brown photo (only 1 of 5 right). **SlimSAM built Oct 24** (see Session 5): clean outlines on all 3 test photos, including chrome rims, swirl art and French tips (the thumb tip on inspo-5 was partly missed). Still to check on a real phone: download time (≈ 14 MB model + 14 MB WASM, cached afterwards), encode time and the brown photo. The user's original brown photo isn't in `test-output/`.
 - **Real renders of both length modes** (Day 5): "Keep my length" with the short-nail crop, and "Extensions" (press-on: never rendered for real yet). Check what YouCam's `length` 1.0–2.15 actually looks like and adjust the Short/Medium/Long/Extra long steps.
 - **Product decision (user, Oct 22):** natural length is a feature, not a bug. Keep both modes; "Extensions" is a different salon service and price (feeds the Day 7 quote and the recipe card).
 - **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
@@ -34,7 +34,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
-| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Built and pushed; first real DeepSeek reply failed to parse (fixed Oct 24, to re-test); Transfer render still to confirm |
+| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Built; Oct 24 fixes (reply parsing, finish picker, SlimSAM outlines) to push and re-test; Transfer render still to confirm |
 | 6 | Oct 26 | Spec editor UI, before/after compare | |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
@@ -256,3 +256,19 @@ Cut order if behind: fidelity scorer → Arabic/RTL → press-on shapes → salo
 - `reading.ts`: `extractJson` drops `<think>` blocks and fences, then tries the whole reply and the outermost `{…}`; `max_tokens` 2000. `deepseek.ts`: empty replies and parse failures include `finish_reason` and the first 200 chars of the reply in the logged error. 2 new test cases (97 tests).
 - `InspoPicker`: a **Finish** chip row (all 9 textures) below the per-finger list. Default is per nail as read (Cream if unread); tapping a chip puts that finish on every nail, tapping it again goes back. Each finger always shows its finish. When the reading fails, all fingers default to **Colour** (pattern unknown; a real finish looks more natural than copied pixels) and the message says to choose a finish below.
 - Verified with `dev-mock` (inspo-5): the reading shows per-finger finishes, Jelly sets all five, and its hint offers going back. One test inspiration row and its storage object deleted; the user's phone session untouched.
+
+### Session 5 (cont.), Oct 24, 2026: reading errors in the app, SlimSAM outlines
+The user asked for all the earlier proposals before pushing.
+
+**Built** (0 units)
+- `POST /api/designs/extract`: a vision-model failure returns 502 with its reason (our messages, DeepSeek error bodies: no secrets); the picker shows it in small grey text under "Couldn't read the finish".
+- **SlimSAM tap-to-segment.** `src/lib/inspo/sam.ts` (pure, tested): encoder input (1024 long side, ImageNet normalisation, zero padding), tap → prompt point, the decoder's 3×256² logits → working-resolution masks (bilinear), and `chooseSamMask`. `sam-browser.ts`: onnxruntime-web 1.30 (`onnxruntime-web/wasm`, proxy worker), lazy load, one encode per photo (started when the photo is chosen), one decode per tap. `regionFromMask` (`region.ts`): the tapped piece, radius-1 opening, holes filled, French tip merged, measured like flood regions. `pickNail` takes an optional SAM outline; confidence = mean of SAM IoU and `pickConfidence`. `InspoPicker`: taps wait for their outline ("Getting the nail outliner ready…" / "Outlining…"); flood fallback when SAM fails or finds nothing nail-sized.
+- `scripts/copy-mediapipe.mjs` → `scripts/copy-wasm.mjs` (also copies `ort-wasm-simd-threaded.{mjs,wasm}` to git-ignored `public/ort/`). Model ONNX files committed under `public/models/slimsam/onnx/`. New `prod` launch config (`next start`).
+- 103 tests pass (6 new); typecheck, lint and `next build` clean.
+
+**Findings**
+- SAM's three guesses come back largest first here (hand, nail, part), not smallest first; choosing by size limits + score handles either order.
+- In proxy (worker) mode ORT **transfers** input buffers, so reused embeddings were detached after the first tap: later taps silently fell back to the flood, and a second photo's encode hung. Fixed by copying the embedding tensors per decode (2 × 4 MB, negligible).
+- Node prototype (onnxruntime-node, scratchpad only): encode ≈ 0.6 s, decode ≈ 20 ms on the Mac.
+
+**Verified** in `dev-mock` and the production build (`prod`): inspo-7 (green swirls) all five clean, inspo-5 (French) five with tips merged on index/middle, a second photo in the same page works, inspo-6 (chrome rims) clean in production. Three test inspiration rows and files deleted.

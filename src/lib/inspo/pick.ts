@@ -5,7 +5,7 @@ import { designSpecSchema, type DesignSpec, FINGERS, type Finger, type PressOnSh
 import { NATURAL_ASPECT, TAPER, type TipShape, taper } from "./design";
 import { type NailColours, nailColours } from "./colours";
 import type { LabImage } from "./oklab";
-import { type NailRegion, nailRegion, type Point, type PreparedImage } from "./region";
+import { type NailRegion, nailRegion, type Point, type PreparedImage, regionFromMask } from "./region";
 
 export interface InspirationImage {
   /** Working resolution (long side ≈ 512): outlines are found here. */
@@ -39,14 +39,26 @@ export function pickConfidence(region: NailRegion, colours: NailColours, imageAr
   return Math.round((0.35 * shape + 0.15 * size + 0.2 * edge + 0.3 * colour) * 100) / 100;
 }
 
-/** Outlines and measures the nail under a tap. Null when nothing usable is there. */
-export function pickNail(img: InspirationImage, tap: Point, expectedArea?: number): NailPick | null {
-  const region = nailRegion(img.prepared, tap, { expectedArea });
+/** A nail outline found by SlimSAM for this tap, with the model's predicted IoU (0–1). */
+export interface SamOutline {
+  mask: Uint8Array;
+  score: number;
+}
+
+/**
+ * Outlines and measures the nail under a tap. Null when nothing usable is there.
+ * With a SlimSAM outline, that is the nail (its score counts for half the
+ * confidence); without one, the colour flood finds it.
+ */
+export function pickNail(img: InspirationImage, tap: Point, expectedArea?: number, sam?: SamOutline): NailPick | null {
+  const region = sam ? regionFromMask(img.prepared, sam.mask, tap) : nailRegion(img.prepared, tap, { expectedArea });
   if (region.area === 0) return null;
   const colours = nailColours(img.detail, region.mask, img.scale);
   if (!colours) return null;
   const { width, height } = img.prepared.structure;
-  return { tap, region, colours, confidence: pickConfidence(region, colours, width * height) };
+  const measured = pickConfidence(region, colours, width * height);
+  const confidence = sam ? Math.round(((measured + sam.score) / 2) * 100) / 100 : measured;
+  return { tap, region, colours, confidence };
 }
 
 /** Median area of the picks so far: nails in one photo are alike, so it bounds the next outline. */

@@ -606,3 +606,59 @@ export function nailRegion(prepared: PreparedImage, tap: Point, options: RegionO
   };
 }
 
+
+/** Mean `step` across the mask's border (image edges count as no contrast), as the flood measures it. */
+function borderContrast(img: LabImage, mask: Uint8Array): number {
+  const { width: w, height: h } = img;
+  let sum = 0;
+  let len = 0;
+  for (let p = 0; p < mask.length; p++) {
+    if (!mask[p]) continue;
+    const x = p % w;
+    const y = (p - x) / w;
+    for (const [dx, dy] of N4) {
+      const qx = x + dx, qy = y + dy;
+      if (qx < 0 || qy < 0 || qx >= w || qy >= h) {
+        len++;
+        continue;
+      }
+      const q = qy * w + qx;
+      if (mask[q]) continue;
+      sum += step(img, p, q);
+      len++;
+    }
+  }
+  return len > 0 ? sum / len : 0;
+}
+
+/**
+ * A nail region from an outline found elsewhere (SlimSAM): the piece under the
+ * tap, thin strands cut, holes filled and a white French tip merged, measured
+ * like the flood's regions so the rest of the picker treats both alike.
+ */
+export function regionFromMask(prepared: PreparedImage, outline: Uint8Array, tap: Point): NailRegion {
+  const { width: w, height: h } = prepared.structure;
+  let mask = componentAt(outline, w, h, tap);
+  // Opening (radius 1) drops strands such as a ring band touching the nail.
+  const opened = componentAt(dilate(erode(mask, w, h, 1), w, h, 1), w, h, tap);
+  if (opened.some(Boolean)) mask = opened;
+  mask = fillHoles(mask, w, h);
+  let area = 0;
+  for (let p = 0; p < mask.length; p++) area += mask[p];
+  const empty = { mask, area: 0, box: orientedBox(mask, w), edgeContrast: 0, convexity: 0, fill: 0, mergedTip: false };
+  if (area === 0) return empty;
+  const tip = mergeWhiteTip(prepared.smooth, mask, area);
+  mask = fillHoles(tip.mask, w, h);
+  area = 0;
+  for (let p = 0; p < mask.length; p++) area += mask[p];
+  const box = orientedBox(mask, w);
+  return {
+    mask,
+    area,
+    box,
+    edgeContrast: borderContrast(prepared.structure, mask),
+    convexity: shapeScore(mask, w, h).convexity,
+    fill: box.length * box.width > 0 ? area / (box.length * box.width) : 0,
+    mergedTip: tip.merged,
+  };
+}

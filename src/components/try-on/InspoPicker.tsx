@@ -11,12 +11,14 @@ import {
   guessExtensions,
   type InspirationImage,
   type NailPick,
+  type SamOutline,
   pickNail,
   sourceFingers,
   typicalArea,
   withDesigns,
 } from "@/lib/inspo/pick";
 import type { Point } from "@/lib/inspo/region";
+import { encodeForSam, samOutline } from "@/lib/inspo/sam-browser";
 import { type EngineChoice, chooseEngine } from "@/lib/render/router";
 import { type DesignSpec, FINGERS, TEXTURES, type Texture, designSpecSchema, solidSpec } from "@/lib/spec/types";
 import { type DesignReading, applyReading, needsArtwork } from "@/lib/vision/reading";
@@ -41,6 +43,16 @@ const OUTLINE: [number, number, number][] = [
 
 /** First-pass picks per photo, so adding a tap doesn't redo the others. */
 const firstPass = new WeakMap<InspirationImage, Map<string, NailPick | null>>();
+
+/** SlimSAM's outline per photo and tap (null: no nail-sized guess, so the colour flood is used). */
+const samOutlines = new WeakMap<InspirationImage, Map<string, SamOutline | null>>();
+const tapKey = (t: Point) => `${t.x},${t.y}`;
+
+function outlinesFor(image: InspirationImage): Map<string, SamOutline | null> {
+  let map = samOutlines.get(image);
+  if (!map) samOutlines.set(image, (map = new Map()));
+  return map;
+}
 
 /** Cut-out PNGs per pick, orientation and length mode, so re-rendering the list doesn't redo them. */
 const cutouts = new WeakMap<NailPick, Map<string, Promise<Blob>>>();
@@ -110,15 +122,18 @@ async function uploadDesign(png: Blob): Promise<string> {
 function pickAll(image: InspirationImage, taps: (Point | null)[]): (NailPick | null)[] {
   let cache = firstPass.get(image);
   if (!cache) firstPass.set(image, (cache = new Map()));
+  const outlines = outlinesFor(image);
   const first = taps.map((t) => {
     if (!t) return null;
-    const key = `${t.x},${t.y}`;
-    if (!cache.has(key)) cache.set(key, pickNail(image, t));
+    const key = tapKey(t);
+    if (!cache.has(key)) cache.set(key, pickNail(image, t, undefined, outlines.get(key) ?? undefined));
     return cache.get(key)!;
   });
-  // Nails in one photo are alike: an outline over twice the typical size leaked, so redo it with that cap.
+  // Nails in one photo are alike: a flood outline over twice the typical size leaked, so redo it with that cap.
   const typical = typicalArea(first);
-  return first.map((p, i) => (p && typical && p.region.area > 2 * typical ? pickNail(image, taps[i]!, typical) : p));
+  return first.map((p, i) =>
+    p && typical && p.region.area > 2 * typical && !outlines.get(tapKey(taps[i]!)) ? pickNail(image, taps[i]!, typical) : p,
+  );
 }
 
 export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignSpec, engine: EngineChoice) => void; busy: boolean }) {
@@ -149,6 +164,10 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   /** The reading whose Design/Colour defaults were applied, so a repeat doesn't undo the user's toggles. */
   const appliedRef = useRef<string | null>(null);
   const fileRef = useRef<Blob | null>(null);
+  /** SlimSAM for the current photo: still loading, ready, or unavailable (then the colour flood outlines). */
+  const [sam, setSam] = useState<"loading" | "ready" | "failed">("loading");
+  /** A tap waiting for its SlimSAM outline: further taps wait too. */
+  const [outlining, setOutlining] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const picks = useMemo(() => (loaded ? pickAll(loaded.image, taps) : []), [loaded, taps]);
@@ -280,6 +299,15 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       fileRef.current = file;
       setLoaded(next);
       setInspoId(null);
+      setSam("loading");
+      // Encoding starts now, so the model is ready by the first tap.
+      encodeForSam(next).then(
+        () => fileRef.current === file && setSam("ready"),
+        (e: unknown) => {
+          console.warn("SlimSAM unavailable, using the colour outliner", e);
+          if (fileRef.current === file) setSam("failed");
+        },
+      );
       uploadInspiration(file).then(
         (id) => fileRef.current === file && setInspoId(id),
         // Picking still works without it; only the finish reading and Nail Transfer need it.
@@ -302,18 +330,32 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   };
 
   const add = (t: Point | null) => {
-    if (done) return;
+    if (done || outlining) return;
     setTaps([...taps, t]);
     setRedo([]);
   };
 
-  const tap = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!loaded) return;
+  const tap = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!loaded || done || outlining) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    add({
+    const t = {
       x: Math.round(((e.clientX - rect.left) / rect.width) * loaded.width),
       y: Math.round(((e.clientY - rect.top) / rect.height) * loaded.height),
-    });
+    };
+    const outlines = outlinesFor(loaded.image);
+    if (sam !== "failed" && !outlines.has(tapKey(t))) {
+      setOutlining(true);
+      try {
+        outlines.set(tapKey(t), await samOutline(loaded, t, { expectedArea: typicalArea(picks) }));
+      } catch (err) {
+        console.warn("SlimSAM outline failed, using the colour outliner", err);
+      } finally {
+        setOutlining(false);
+      }
+      if (fileRef.current !== loaded.file) return; // a new photo was chosen meanwhile
+    }
+    setTaps([...taps, t]);
+    setRedo([]);
   };
 
   const undo = () => {
@@ -405,13 +447,14 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               aria-label="Tap the nails in finger order"
             />
           </div>
+          {outlining && <p className="text-sm text-zinc-500" aria-live="polite">{sam === "loading" ? "Getting the nail outliner ready…" : "Outlining…"}</p>}
           {failed && <p className="text-sm text-amber-700">Couldn&apos;t outline a nail there. Undo and tap nearer the middle of the nail.</p>}
 
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => add(null)} disabled={done} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
+            <button onClick={() => add(null)} disabled={done || outlining} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
               Skip {done ? "" : LABELS[taps.length].toLowerCase()} (not visible)
             </button>
-            <button onClick={undo} disabled={taps.length === 0} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
+            <button onClick={undo} disabled={taps.length === 0 || outlining} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
               Undo
             </button>
             <button onClick={redoTap} disabled={redo.length === 0} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
@@ -477,7 +520,10 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
                 (reading.value.isNailDesign
                   ? reading.value.summary || "Finish and pattern read."
                   : "This doesn't look like a nail design. Choose a photo that shows painted nails.")}
-              {reading.status === "error" && <span className="text-amber-700">Couldn&apos;t read the finish from the photo. Choose it below.</span>}
+              {reading.status === "error" && <span className="text-amber-700">
+                  Couldn&apos;t read the finish from the photo. Choose it below.
+                  <span className="mt-1 block break-words text-xs text-zinc-500" data-testid="reading-error">{reading.error}</span>
+                </span>}
             </p>
           )}
 

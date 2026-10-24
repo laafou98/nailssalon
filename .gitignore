@@ -46,3 +46,4 @@ test-output/
 
 # copied from node_modules by scripts/copy-mediapipe.mjs
 /public/mediapipe/wasm/
+/public/ort/
