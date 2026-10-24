@@ -19,6 +19,15 @@ import { laplacianVariance, lumaStats } from "./pixels";
 type Mode = "VIDEO" | "IMAGE";
 
 let loading: Promise<HandLandmarker> | null = null;
+
+/** Palm detector threshold for the live camera. */
+const DETECTION = 0.5;
+/**
+ * Retry threshold for still photos where nothing was found. The palm detector misses
+ * curled, palm-side hands in busy scenes (user's photo, Oct 24: found at 0.15, while
+ * a hand-free crop and noise still found nothing), and the landmark model is then sure.
+ */
+const STILL_RETRY_DETECTION = 0.15;
 let currentMode: Mode = "VIDEO";
 
 /** Lazily creates one shared HandLandmarker (≈ 20 MB of WASM + model, cached by the browser). */
@@ -30,7 +39,8 @@ export function loadLandmarker(): Promise<HandLandmarker> {
       baseOptions: { modelAssetPath: "/mediapipe/hand_landmarker.task", delegate },
       runningMode: "VIDEO" as const,
       numHands: 2, // so we can tell the user there are two hands, not silently pick one
-      minHandDetectionConfidence: 0.5,
+      minHandDetectionConfidence: DETECTION,
+      // Presence (the landmark model's own check) stays strict, so a low detection bar doesn't invent hands.
       minHandPresenceConfidence: 0.5,
     });
     try {
@@ -122,6 +132,14 @@ export async function analyze(
   if (timestampMs === undefined) {
     await setMode(landmarker, "IMAGE");
     result = landmarker.detect(source);
+    if (result.landmarks.length === 0) {
+      await landmarker.setOptions({ minHandDetectionConfidence: STILL_RETRY_DETECTION });
+      try {
+        result = landmarker.detect(source);
+      } finally {
+        await landmarker.setOptions({ minHandDetectionConfidence: DETECTION });
+      }
+    }
   } else {
     await setMode(landmarker, "VIDEO");
     result = landmarker.detectForVideo(source, timestampMs);

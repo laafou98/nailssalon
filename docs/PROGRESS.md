@@ -272,3 +272,8 @@ The user asked for all the earlier proposals before pushing.
 - Node prototype (onnxruntime-node, scratchpad only): encode ≈ 0.6 s, decode ≈ 20 ms on the Mac.
 
 **Verified** in `dev-mock` and the production build (`prod`): inspo-7 (green swirls) all five clean, inspo-5 (French) five with tips merged on index/middle, a second photo in the same page works, inspo-6 (chrome rims) clean in production. Three test inspiration rows and files deleted.
+
+### Session 5 (cont.), Oct 24, 2026: curled palm-side hand not found
+**Phone test:** the user's curled, palm-side hand over a lit green keyboard was refused with "Show the back of one hand to the camera", the message for **no hand found** (the pose rules never ran). Reproduced on a crop of the screenshot: MediaPipe's palm detector finds nothing at 0.5 or 0.3 on the full frame, but finds it on a tighter crop or at 0.15, with handedness 0.99.
+
+**Fix** (`hand-gate/browser.ts`): still photos that return no hand are re-detected at `minHandDetectionConfidence` 0.15; presence stays at 0.5, so the landmark model still has to be sure. At 0.15 a hand-free crop of the same photo and a noise image still give no hand. The live camera keeps 0.5. Verified by uploading the crop in `dev-mock`: accepted and cropped to the hand. Test hand row and file deleted.
