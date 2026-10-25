@@ -4,7 +4,7 @@
 
 import { analyze, loadLandmarker } from "@/lib/hand-gate/browser";
 import { showsWholeHand } from "@/lib/hand-gate/checks";
-import { DESIGN_LIMITS, nailDesign, type RgbaImage, type TipShape } from "./design";
+import { type CutoutDetail, DESIGN_LIMITS, cutoutDetail, nailDesign, type RgbaImage, type TipShape } from "./design";
 import { toLabImage } from "./oklab";
 import type { InspirationImage, NailPick } from "./pick";
 import { prepareImage } from "./region";
@@ -68,6 +68,17 @@ export async function nailDesignPng(loaded: LoadedInspiration, pick: NailPick, f
     if (!blob) throw new Error("Couldn't encode the design image");
     if (blob.size <= DESIGN_LIMITS.maxBytes || shrink < 0.4) return blob;
   }
+}
+
+/** Whether this nail's cut-out is face-on and sharp enough to copy its art (see `cutoutDetail`). */
+export function pickDetail(loaded: LoadedInspiration, pick: NailPick, extensions: TipShape | null): CutoutDetail | null {
+  const src = sources.get(loaded.file);
+  if (!src) return null;
+  const design = nailDesign(src, src.width / loaded.width, pick.region, loaded.width, pick.colours.base.hex, {
+    fit: extensions ? "full" : "natural",
+    silhouette: extensions ?? undefined,
+  });
+  return cutoutDetail(pick.region, design);
 }
 
 export async function loadInspiration(file: Blob): Promise<LoadedInspiration> {

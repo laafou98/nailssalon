@@ -446,6 +446,41 @@ export function componentAt(mask: Uint8Array, w: number, h: number, seed: Point)
   return out;
 }
 
+/** A neighbour joined by a neck must hold at least this share of the tapped nail's area to be cut off. */
+const NEIGHBOUR_SHARE = 0.25;
+
+/**
+ * Cuts a neighbouring nail off an outline that swallowed two touching nails (the pinky
+ * cut-out of Oct 25 held the ring nail too). Erodes a little more each time until the
+ * outline falls apart into big pieces, keeps the one under the tap and grows it back
+ * inside the original outline. A single convex nail never splits, so it comes back as is.
+ */
+export function separateTouching(mask: Uint8Array, w: number, h: number, tap: Point, maxRadius = 4): Uint8Array {
+  const area = mask.reduce((a, b) => a + b, 0);
+  for (let r = 1; r <= maxRadius; r++) {
+    const eroded = erode(mask, w, h, r);
+    const own = componentAt(eroded, w, h, tap);
+    const ownArea = own.reduce((a, b) => a + b, 0);
+    if (ownArea === 0) return mask;
+    // Whatever erosion left outside the tapped piece: is any of it a sizeable second nail?
+    const rest = eroded.map((v, p) => (v && !own[p] ? 1 : 0));
+    let largestOther = 0;
+    const seen = new Uint8Array(rest.length);
+    for (let p = 0; p < rest.length; p++) {
+      if (!rest[p] || seen[p]) continue;
+      const piece = componentAt(rest, w, h, { x: p % w, y: Math.floor(p / w) });
+      let n = 0;
+      for (let q = 0; q < piece.length; q++) if (piece[q]) { seen[q] = 1; n++; }
+      largestOther = Math.max(largestOther, n);
+    }
+    if (largestOther >= NEIGHBOUR_SHARE * ownArea) {
+      const grown = dilate(own, w, h, r).map((v, p) => v & mask[p]);
+      return grown.reduce((a, b) => a + b, 0) > 0.2 * area ? grown : mask;
+    }
+  }
+  return mask;
+}
+
 /** Principal-axis box around the mask: centre, long-axis angle, length and width. */
 export function orientedBox(mask: Uint8Array, w: number): OrientedBox {
   let n = 0, sx = 0, sy = 0;
@@ -642,7 +677,7 @@ export function regionFromMask(prepared: PreparedImage, outline: Uint8Array, tap
   // Opening (radius 1) drops strands such as a ring band touching the nail.
   const opened = componentAt(dilate(erode(mask, w, h, 1), w, h, 1), w, h, tap);
   if (opened.some(Boolean)) mask = opened;
-  mask = fillHoles(mask, w, h);
+  mask = separateTouching(fillHoles(mask, w, h), w, h, tap);
   let area = 0;
   for (let p = 0; p < mask.length; p++) area += mask[p];
   const empty = { mask, area: 0, box: orientedBox(mask, w), edgeContrast: 0, convexity: 0, fill: 0, mergedTip: false };

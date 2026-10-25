@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng, toJpeg } from "@/lib/inspo/browser";
+import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng, pickDetail, toJpeg } from "@/lib/inspo/browser";
 import {
   LENGTHS,
   TIP_SHAPES,
@@ -21,6 +21,7 @@ import {
   withDesigns,
 } from "@/lib/inspo/pick";
 import { smoothOutline } from "@/lib/inspo/contour";
+import type { CutoutDetail } from "@/lib/inspo/design";
 import type { Point } from "@/lib/inspo/region";
 import { nailPromptBox } from "@/lib/inspo/sam";
 import { encodeForSam, samOutline } from "@/lib/inspo/sam-browser";
@@ -94,6 +95,12 @@ function cutout(loaded: LoadedInspiration, pick: NailPick, flipped: boolean, ext
   const key = `${flipped}/${extensions}`;
   if (!byKind.has(key)) byKind.set(key, nailDesignPng(loaded, pick, flipped, extensions));
   return byKind.get(key)!;
+}
+
+/** Why a nail's art isn't copied by default, under its finger. */
+function detailNote(d: CutoutDetail | null): string | null {
+  if (!d || d.ok) return null;
+  return { side_on: "side view", partial: "partial nail", blurry: "blurry" }[d.reason];
 }
 
 const TIP_LABELS: Record<TipShape, string> = { almond: "Almond", stiletto: "Stiletto", oval: "Oval", square: "Square", squoval: "Squoval" };
@@ -233,6 +240,14 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const shownFinish = finish ?? (spec && new Set(FINGERS.map((f) => spec.fingers[f].texture)).size === 1 ? spec.fingers.thumb.texture : null);
   const guess = useMemo(() => (loaded ? guessExtensions(picks, loaded.width) : null), [loaded, picks]);
   const shape = tip ?? read?.shape ?? guess?.tip ?? "almond";
+  /** Per finger: whether its cut-out is face-on and sharp enough for its art to survive. */
+  const detail = useMemo(() => allPicks.map((p) => (loaded && p ? pickDetail(loaded, p, extensions ? shape : null) : null)), [loaded, allPicks, extensions, shape]);
+  // Switching to extensions can make a cut-out too blurry: those fingers fall back to colour (the user can switch back).
+  const [detailSeen, setDetailSeen] = useState(detail);
+  if (detailSeen !== detail) {
+    setDetailSeen(detail);
+    setUseDesign(useDesign.map((v, i) => v && (sources[i] === null || detail[sources[i]!]?.ok !== false)));
+  }
   const nailLength = length ?? read?.length ?? guess?.length ?? 1.4;
   const approximate = spec !== null && chooseEngine(spec) === "nail_transfer";
 
@@ -310,9 +325,12 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
         if (appliedRef.current !== readingKey) {
           appliedRef.current = readingKey;
           // Plain nails render best as colour (real finish); art, French, ombre and cat-eye need the artwork.
+          // A nail too small or side-on in the photo would be a blurry smear: colour instead (the user can still switch).
           setUseDesign(FINGERS.map((_, i) => {
-            const r = pickSources[i] === null ? null : value.fingers[pickSources[i]!];
-            return r?.pattern ? needsArtwork(r.pattern) : true;
+            const from = pickSources[i];
+            const r = from === null ? null : value.fingers[from];
+            const sharp = from !== null && detail[from]?.ok !== false;
+            return sharp && (r?.pattern ? needsArtwork(r.pattern) : true);
           }));
         }
       },
@@ -330,7 +348,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     return () => {
       cancelled = true;
     };
-  }, [readingKey, loaded, inspoId, allPicks]);
+  }, [readingKey, loaded, inspoId, allPicks, detail]);
 
   // Cut-out previews for every picked nail.
   useEffect(() => {
@@ -613,7 +631,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               const preview = from !== null ? previews[from] : null;
               const showDesign = useDesign[i] && preview;
               return (
-                <li key={finger} className={`flex flex-col items-center gap-1 rounded-lg text-center ${swapFrom === i ? "bg-amber-500/20" : editing === i ? "bg-zinc-200 dark:bg-zinc-800" : ""}`} data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined}>
+                <li key={finger} className={`flex flex-col items-center gap-1 rounded-lg text-center ${swapFrom === i ? "bg-amber-500/20" : editing === i ? "bg-zinc-200 dark:bg-zinc-800" : ""}`} data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined} data-detail={detail[i] ? `${detail[i]!.ok ? "ok" : detail[i]!.reason} sharpness ${detail[i]!.sharpness}` : undefined}>
                   <div
                     className="relative flex h-14 items-center"
                     role={f ? "button" : undefined}
@@ -647,7 +665,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
                   </div>
                   <span className="text-[11px] leading-tight">{LABELS[i]}</span>
                   <span className="text-[10px] leading-tight text-zinc-500">
-                    {!f ? "–" : !picked ? "copied" : f.confidence < 0.6 ? "unsure" : ""}
+                    {!f ? "–" : !picked ? "copied" : detailNote(detail[i]) ?? (f.confidence < 0.6 ? "unsure" : "")}
                   </span>
                   {f && <span className="text-[10px] leading-tight" data-texture={f.texture}>{TEXTURE_LABELS[f.texture]}</span>}
                   {f && (
