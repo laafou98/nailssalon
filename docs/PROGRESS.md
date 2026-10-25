@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 6 of 12 (Oct 25, 2026). Pushed: everything through the true-colour composite (session 9). Committed, **not yet pushed**: design cut-out cleanup (session 10); realism pass on every Nail VTO render and calibrated extension lengths (session 11). **Next:** push; phone test of an extension render from an art inspiration (≈ 1 unit, also checks the new Long step); decide on the softer chrome preset (≈ 1 unit to judge); then Day 7 (skin tone, polish matching, quote).
+- **Day:** 6 of 12 (Oct 25, 2026). Pushed and deployed (Oct 25, `d838248`): everything through session 11 (design cut-out cleanup, realism pass on every Nail VTO render, calibrated extension lengths). **Next:** phone test of an extension render from an art inspiration (≈ 1 unit, also checks the new Long step); decide on the softer chrome preset (≈ 1 unit to judge); then Day 7 (skin tone, polish matching, quote).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
