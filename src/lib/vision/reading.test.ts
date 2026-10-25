@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { solidSpec, designSpecSchema } from "@/lib/spec/types";
+import { LENGTHS } from "@/lib/inspo/pick";
 import { applyReading, buildReadingContent, needsArtwork, parseReading, readingFormat } from "./reading";
 
 const reply = (over: object = {}) => ({
@@ -36,7 +37,7 @@ describe("parseReading", () => {
     expect(r.fingers[1]).toBeNull(); // cropped but not answered
     expect(r.fingers[3]).toEqual({ texture: "shimmer_coarse", pattern: "art", confidence: 0.7 });
     expect(r.fingers[2]).toBeNull();
-    expect(r).toMatchObject({ isNailDesign: true, shape: "almond", length: 1.8, summary: "Milky jelly with a glitter accent" });
+    expect(r).toMatchObject({ isNailDesign: true, shape: "almond", length: LENGTHS[2].value, summary: "Milky jelly with a glitter accent" });
   });
 
   it("ignores fingers it wasn't shown and drops unknown values without failing", () => {

@@ -149,20 +149,36 @@ export { TIP_SHAPES, type TipShape } from "./design";
 /** YouCam press-on shape for a tip shape: we keep a natural oval cuticle. */
 export const pressOnShape = (tip: TipShape): PressOnShape => `${tip}_oval`;
 
-/** Extension lengths offered (YouCam's press-on `length`, 0.8–2.15). */
+/**
+ * How much longer than the natural nail YouCam draws a press-on, per unit of `length` above 1. Measured on one
+ * real render (Oct 25, `length` 1.8): thumb, index and ring came out 2.0–2.3× the same hand's natural nails, so
+ * 1 + 1.4 × (1.8 − 1) ≈ 2.1. One data point: re-check on the next real Extensions render.
+ */
+export const YOUCAM_LENGTH_GAIN = 1.4;
+
+/** Nail length a press-on `length` gives, as a multiple of the client's natural nail. */
+export const lengthRatio = (length: number) => 1 + YOUCAM_LENGTH_GAIN * (length - 1);
+
+/**
+ * Extension lengths offered (YouCam's press-on `length`, 0.8–2.15), chosen to give about 1.2×, 1.5×, 1.85× and
+ * 2.25× a short natural nail. The old steps (1, 1.4, 1.8, 2.15) made "Long" about 2.1×, which looked very long.
+ */
 export const LENGTHS = [
-  { label: "Short", value: 1 },
-  { label: "Medium", value: 1.4 },
-  { label: "Long", value: 1.8 },
-  { label: "Extra long", value: 2.15 },
+  { label: "Short", value: 1.15 },
+  { label: "Medium", value: 1.35 },
+  { label: "Long", value: 1.6 },
+  { label: "Extra long", value: 1.9 },
 ] as const;
+
+/** The step used when nothing suggests a length. */
+export const DEFAULT_LENGTH = LENGTHS[1].value;
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[values.length >> 1];
 
 /**
  * Shape and length the inspiration nails seem to have: tapered ends → almond
  * (stiletto when sharply pointed), boxy outlines → square, else oval; length from
- * how much longer than a short natural nail they are, snapped to the offered steps.
+ * how much longer than a short natural nail they are, snapped to the offered steps (at most Long).
  */
 export function guessExtensions(picks: (NailPick | null)[], maskWidth: number): { tip: TipShape; length: number } | null {
   const regions = picks.filter((p): p is NailPick => p !== null).map((p) => p.region);
@@ -172,7 +188,9 @@ export function guessExtensions(picks: (NailPick | null)[], maskWidth: number): 
   const tip: TipShape = t < 0.45 ? "stiletto" : t < TAPER ? "almond" : fill > 0.86 ? "square" : "oval";
   const aspect = median(regions.map((r) => r.box.length / Math.max(1, r.box.width)));
   const wanted = aspect / NATURAL_ASPECT;
-  const length = LENGTHS.reduce((best, l) => (Math.abs(l.value - wanted) < Math.abs(best - wanted) ? l.value : best), LENGTHS[0].value as number);
+  // Snap by the nail length YouCam will draw; Extra long only when asked for (photos exaggerate length).
+  const offered = LENGTHS.slice(0, 3).map((l) => l.value as number);
+  const length = offered.reduce((best, l) => (Math.abs(lengthRatio(l) - wanted) < Math.abs(lengthRatio(best) - wanted) ? l : best));
   return { tip, length };
 }
 

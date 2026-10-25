@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { solidSpec } from "@/lib/spec/types";
 import { applyEdits } from "./pick";
 import { toLabImage } from "./oklab";
-import { asExtensions, draftSpec, guessExtensions, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "./pick";
+import { LENGTHS, asExtensions, draftSpec, guessExtensions, lengthRatio, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "./pick";
 import { prepareImage } from "./region";
 import { inEllipse, noise, scene } from "./synthetic.test-helpers";
 
@@ -85,16 +85,32 @@ describe("guessExtensions", () => {
     const almond = pickOf((x, y) => x >= 28 && x <= 96 && Math.abs(y - 60) <= 16 * Math.min(1, Math.sqrt((96 - x) / 40)) * Math.sqrt(Math.max(0, 1 - ((Math.min(x, 60) - 60) / 32) ** 2)));
     const g = guessExtensions([almond, almond, null, null, null], 120)!;
     expect(g.tip).toBe("almond");
-    expect(g.length).toBeGreaterThanOrEqual(1.4);
+    expect(g.length).toBeGreaterThanOrEqual(LENGTHS[1].value);
   });
 
   it("reads a short oval nail as oval and short", () => {
     const oval = pickOf((x, y) => inEllipse(x, y, 60, 60, 18, 23));
-    expect(guessExtensions([oval, null, null, null, null], 120)).toEqual({ tip: "oval", length: 1 });
+    expect(guessExtensions([oval, null, null, null, null], 120)).toEqual({ tip: "oval", length: LENGTHS[0].value });
+  });
+
+  it("never guesses Extra long, however long the photo's nails look", () => {
+    const stiletto = pickOf((x, y) => x >= 6 && x <= 114 && Math.abs(y - 60) <= 12 * Math.min(1, (114 - x) / 30));
+    expect(guessExtensions([stiletto, null, null, null, null], 120)!.length).toBe(LENGTHS[2].value);
   });
 
   it("returns null with no picks", () => {
     expect(guessExtensions([null, null, null, null, null], 120)).toBeNull();
+  });
+});
+
+describe("LENGTHS", () => {
+  it("gives about 1.2×, 1.5×, 1.85× and 2.25× the natural nail with YouCam's measured gain", () => {
+    expect(LENGTHS.map((l) => Math.round(lengthRatio(l.value) * 20) / 20)).toEqual([1.2, 1.5, 1.85, 2.25]);
+  });
+
+  it("puts the user's 1.8 render (about 2.1× the natural nail) above Long", () => {
+    expect(lengthRatio(1.8)).toBeCloseTo(2.12);
+    expect(lengthRatio(LENGTHS[2].value)).toBeLessThan(1.9);
   });
 });
 

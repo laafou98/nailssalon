@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng, pickDetail, toJpeg } from "@/lib/inspo/browser";
 import {
+  DEFAULT_LENGTH,
   LENGTHS,
   TIP_SHAPES,
   type TipShape,
@@ -248,7 +249,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     setDetailSeen(detail);
     setUseDesign(useDesign.map((v, i) => v && (sources[i] === null || detail[sources[i]!]?.ok !== false)));
   }
-  const nailLength = length ?? read?.length ?? guess?.length ?? 1.4;
+  const nailLength = length ?? read?.length ?? guess?.length ?? DEFAULT_LENGTH;
   const approximate = spec !== null && chooseEngine(spec) === "nail_transfer";
 
   // Automatic nail detection: once the photo is stored, the vision model names and locates the nails,
