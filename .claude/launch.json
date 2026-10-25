@@ -35,6 +35,20 @@
       "port": 3000
     },
     {
+      "name": "dev-mock-render",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "NODE_USE_ENV_PROXY=1",
+        "YOUCAM_MOCK=1",
+        "VISION_MOCK=1",
+        "YOUCAM_MOCK_RESULT=test-output/mock-render.png",
+        "npm",
+        "run",
+        "dev"
+      ],
+      "port": 3000
+    },
+    {
       "name": "prod",
       "runtimeExecutable": "env",
       "runtimeArgs": [

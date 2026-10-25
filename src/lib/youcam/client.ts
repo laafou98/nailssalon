@@ -45,13 +45,21 @@ function headers(): HeadersInit {
  * Local-only stand-in for YouCam, so the whole render flow can be exercised without
  * spending units: tasks "succeed" after 3 s and return the hand photo itself.
  * The colour #000001 makes a task fail with error_no_nail, to exercise failure handling.
- * Enabled with YOUCAM_MOCK=1, and never in production builds.
+ * YOUCAM_MOCK_RESULT=<local image path> returns that image instead (e.g. a saved real render,
+ * to exercise the true-colour composite). Enabled with YOUCAM_MOCK=1, and never in production builds.
  */
 const mockEnabled = () => process.env.YOUCAM_MOCK === "1" && process.env.NODE_ENV !== "production";
 type MockTask = { src: string; at: number; fail: boolean };
 const mockTasks: Map<string, MockTask> = ((globalThis as { __youcamMock?: Map<string, MockTask> }).__youcamMock ??= new Map());
 export const MOCK_FAIL_COLOR = "#000001";
 const MOCK_PREFIX = "mock_";
+
+async function mockResultUrl(src: string): Promise<string> {
+  const file = process.env.YOUCAM_MOCK_RESULT;
+  if (!file) return src;
+  const { readFile } = await import("node:fs/promises");
+  return `data:application/octet-stream;base64,${(await readFile(file)).toString("base64")}`;
+}
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const text = await res.text();
@@ -95,7 +103,8 @@ export async function getTask(engine: Engine, taskId: string): Promise<TaskState
     const task = mockEnabled() ? mockTasks.get(taskId) : undefined;
     if (!task) return { status: "error", error: "mock_task_not_found" };
     if (Date.now() - task.at < 3000) return { status: "running" };
-    return task.fail ? { status: "error", error: "error_no_nail" } : { status: "success", resultUrl: task.src };
+    if (task.fail) return { status: "error", error: "error_no_nail" };
+    return { status: "success", resultUrl: await mockResultUrl(task.src) };
   }
   const res = await fetch(
     `${YOUCAM_BASE_URL}/task/${ENGINES[engine].path}/${encodeURIComponent(taskId)}`,

@@ -126,6 +126,7 @@ else                         → Nail Transfer (hand + raw inspiration), labelle
 - **Unit guard:** `unit_ledger` table; hard caps per session (e.g. 15) and global (e.g. 900); the demo never overdraws.
 - **Polling:** create task, poll every 2 s (observed 7–10 s end-to-end), 60 s timeout; client polls our `/api/renders/:id`.
 - **Persistence:** result copied to Supabase Storage immediately (YouCam URLs expire in 2 h).
+- **True-colour composite** (`src/lib/render/composite.ts`): plain-colour Nail VTO results are recoloured to the exact requested hue per finger (nearest hand-landmark fingertip), keeping YouCam's mask and shading and adding the photo's grain. YouCam's original is kept as `renders/<id>-youcam.<ext>`; any failure keeps the original.
 - **Edit loop:** "Make it almond, shorter" changes `shape`/`length` in the spec → new render; everything else stays. This is the demo moment Nail Transfer cannot do.
 
 ### [E] Shade & Stock Engine (server, 0 units)
@@ -235,7 +236,7 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 | Risk | Mitigation |
 |---|---|
 | Landmarks fail on cropped inspiration photos (no full hand) | **Happened (Oct 21).** Switched to tap-to-pick; the vision model may pre-place taps later; Nail Transfer stays the "approximate" fallback |
-| Renders look "pasted on" (chrome streaks, hue drift, too clean on noisy photos) | Full-res capture; Cream as the default finish; optional true-colour composite (`scripts/prototypes/`), decision pending |
+| Renders look "pasted on" (chrome streaks, hue drift, too clean on noisy photos) | Full-res capture; Cream as the default finish; true-colour composite for plain-colour renders (`src/lib/render/composite.ts`) |
 | Design PNGs look poor in VTO | Test in week 1; fall back to colour + pattern params, or Transfer, for art nails |
 | Units run out | Cache, per-session caps, global ledger; ~1 unit per render; social bonus (+1,000) |
 | Skin-tone accuracy under bad light | Exposure gate in [A]; show confidence; let the user pick undertone manually |

@@ -18,7 +18,7 @@ A nail design compiler: inspiration photo → editable per-finger spec → rende
 ## Commands
 - `npm run dev`, `npm run build`, `npm test` (Vitest), `npm run typecheck`, `npx eslint src`
 - Locally, Node's outbound fetch needs `NODE_USE_ENV_PROXY=1` (sandbox proxy), e.g. `NODE_USE_ENV_PROXY=1 npm run dev`.
-- Free end-to-end testing: `NODE_USE_ENV_PROXY=1 YOUCAM_MOCK=1 VISION_MOCK=1 npm run dev` (launch config `dev-mock`; the vision mock returns a fixed reading instead of calling Claude). Mock renders return the hand photo after 3 s; colour `#000001` makes one fail. Still writes real rows to Supabase, so clean up test sessions afterwards.
+- Free end-to-end testing: `NODE_USE_ENV_PROXY=1 YOUCAM_MOCK=1 VISION_MOCK=1 npm run dev` (launch config `dev-mock`; the vision mock returns a fixed reading instead of calling Claude). Mock renders return the hand photo after 3 s (or the file in `YOUCAM_MOCK_RESULT`, launch config `dev-mock-render`, to exercise the true-colour composite); colour `#000001` makes one fail. Still writes real rows to Supabase, so clean up test sessions afterwards.
 - Launch configs (`.claude/launch.json`): `dev` (plain), `dev-mock` (proxy + fake YouCam, free), `dev-live` (proxy + real YouCam; polling a finished task is free, new renders cost units).
 - Check a deploy: `gh api repos/laafou98/nailssalon/commits/<sha>/status` (the Vercel MCP gets 403 on deployments and logs).
 - YouCam smoke test (2 units): `NODE_USE_ENV_PROXY=1 node --env-file=.env.local scripts/smoke-test.mjs`

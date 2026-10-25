@@ -3,8 +3,10 @@ import { serverEnv } from "@/lib/env";
 import { type DesignSpec } from "@/lib/spec/types";
 import { renderCacheKey, toNailVtoPayload, toTransferPayload, transferCacheKey } from "@/lib/spec/payload";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
+import { getObject, putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
 import { ENGINES, YouCamError, createTask, getTask } from "@/lib/youcam/client";
+import { compositeTargets } from "./composite";
+import { compositeRender } from "./composite-image";
 import { sniffImageType } from "./image-type";
 import { type EngineChoice, type EngineName, chooseEngine } from "./router";
 
@@ -14,7 +16,8 @@ import { type EngineChoice, type EngineName, chooseEngine } from "./router";
  *  1. cache: identical (hand photo, visible spec) requests reuse the first render;
  *  2. unit ledger: per-session and global caps, reserved atomically before the call;
  *  3. refunds: a render that fails gives its unit back (YouCam only charges successes).
- * Results are copied into our storage immediately (YouCam URLs expire after 2 h).
+ * Results are copied into our storage immediately (YouCam URLs expire after 2 h), then plain-colour
+ * Nail VTO renders get the true-colour composite (exact requested hue, photo grain; see composite.ts).
  */
 
 export type RenderView =
@@ -42,11 +45,12 @@ interface RenderRow {
   youcam_task_id: string | null;
   created_at: string;
   result: { path: string } | null;
-  hand: { session_id: string | null } | null;
+  hand: { session_id: string | null; path: string; landmarks: unknown } | null;
+  design: { spec: DesignSpec } | null;
 }
 
 const RENDER_COLUMNS =
-  "id, engine, status, error, youcam_task_id, created_at, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id)";
+  "id, engine, status, error, youcam_task_id, created_at, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id, path, landmarks), design:designs(spec)";
 
 async function view(row: RenderRow, cached = false): Promise<RenderView> {
   const { id, engine } = row;
@@ -208,9 +212,13 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   // Success: copy the result out of YouCam before its URL expires. Safe to repeat if two polls race.
   const res = await fetch(state.resultUrl);
   if (!res.ok) throw new Error(`Could not download render result (${res.status})`);
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const type = sniffImageType(bytes);
-  if (!type) throw new Error("Render result is not an image");
+  const raw = new Uint8Array(await res.arrayBuffer());
+  const rawType = sniffImageType(raw);
+  if (!rawType) throw new Error("Render result is not an image");
+  const final = await trueColour(row, raw);
+  if (final) await putObject(`renders/${row.id}-youcam.${rawType.ext}`, raw, rawType.contentType); // kept for comparison
+  const bytes = final ?? raw;
+  const type = final ? { ext: "jpg", contentType: "image/jpeg" } : rawType;
   const path = `renders/${row.id}.${type.ext}`;
   await putObject(path, bytes, type.contentType);
   const image = await upsertImage({ session_id: sessionId, kind: "render", path, sha256: sha256(bytes) });
@@ -220,4 +228,25 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
     .eq("id", row.id)
     .eq("status", "running");
   return { id, engine, status: "success", resultUrl: await signedUrl(path), cached: false };
+}
+
+/**
+ * The true-colour composite of a finished render, or null to keep YouCam's own image
+ * (Transfer, design fingers, nothing recoloured, or any failure: a paid render is never lost).
+ */
+async function trueColour(row: RenderRow, raw: Uint8Array): Promise<Uint8Array | null> {
+  if (row.engine !== "nail_vto" || !row.design || !row.hand) return null;
+  const targets = compositeTargets(row.design.spec, row.hand.landmarks);
+  if (!targets) return null;
+  try {
+    const outcome = await compositeRender(await getObject(row.hand.path), raw, { targets });
+    if (!outcome.ok) {
+      console.info(`render ${row.id}: true-colour composite skipped (${outcome.reason})`);
+      return null;
+    }
+    return outcome.bytes;
+  } catch (error) {
+    console.error(`render ${row.id}: true-colour composite failed`, error);
+    return null;
+  }
 }

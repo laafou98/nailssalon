@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 (Oct 24, 2026). Pushed: MobileSAM outlines, the switch from DeepSeek to Claude for the design reading. Committed, **not yet pushed**: outliner status line, stricter mask choice, box prompt (see the last session entry). Pushed: automatic nail detection, finger swapping, smooth outlines. Committed, **not yet pushed**: Day 6 spec editor (colour and finish per finger) and the before/after slider. **Next:** push; phone test of automatic picks, the editor and the slider with one render (≈ 1 unit); then Day 7 (skin tone, polish matching, quote).
+- **Day:** 6 of 12 (Oct 25, 2026). Pushed: MobileSAM outlines, the switch from DeepSeek to Claude for the design reading. Committed, **not yet pushed**: outliner status line, stricter mask choice, box prompt (see the last session entry). Pushed: automatic nail detection, finger swapping, smooth outlines. Committed, **not yet pushed**: Day 6 spec editor (colour and finish per finger), the before/after slider, and the **true-colour composite** in the render pipeline (session 9). **Next:** push; phone test of automatic picks, the editor, the slider and the composite with one plain-colour render (≈ 1 unit); then Day 7 (skin tone, polish matching, quote).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -19,7 +19,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **Real renders of both length modes** (Day 5): "Keep my length" with the short-nail crop, and "Extensions" (press-on: never rendered for real yet). Check what YouCam's `length` 1.0–2.15 actually looks like and adjust the Short/Medium/Long/Extra long steps.
 - **Product decision (user, Oct 22):** natural length is a feature, not a bug. Keep both modes; "Extensions" is a different salon service and price (feeds the Day 7 quote and the recipe card).
 - **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
-- **Render realism, decision pending (user):** build the "true-colour composite" (exact requested hue + photo grain on YouCam's mask; `scripts/prototypes/true_colour_composite.py`) into the pipeline, or fold it into Day 7 colour matching. Cream looks decent on the phone; Chrome looks cheap (streaks, coral → red).
+- **Render realism** (Oct 25): the true-colour composite is built in (`src/lib/render/composite.ts`) for plain-colour Nail VTO renders: exact hue per finger, photo grain. Checked offline on the 5 plain-colour phone renders (coral chrome now coral; dark greens match per finger). Not applied to design fingers or Transfer. Chrome streaks are softened, not gone: maybe tone down the metallic preset on Day 7. YouCam's original is kept next to it as `renders/<id>-youcam.<ext>`. Not yet seen on the phone.
 - **Camera:** confirm on the phone whether the accepted photo says "camera photo" (full-res ImageCapture) or "video frame".
 - **Known limits:** tap-to-pick tuned on 3 photos only (half-hidden thumbs can leak into look-alike backgrounds; chrome outlines aren't accents). Side-on thumbs still get painted by YouCam.
 - **Tooling:** the Vercel MCP returns 403 for deployments and runtime logs. Check deploys with `gh api repos/laafou98/nailssalon/commits/<sha>/status`; debug server errors by reproducing locally (`dev-live` launch config).
@@ -337,3 +337,20 @@ The user chose to push on building and refine later (the true-colour composite d
 **Verified** (`dev-mock`, phone size, temporary page deleted): inspo-8 tapped manually (the mock finds no nails automatically, as designed); ring → #3366CC + Matte with Design off; Apply to all → all five #3366CC/matte; the slider splits the two images at the handle. Test inspiration row and file deleted.
 
 **Not done (refine later):** per-finger editing in the one-colour mode (it has one colour and finish for all); shape and length per finger (one shape and length for the hand, as YouCam's press-on effect takes them).
+
+### Session 9, Oct 25, 2026: true-colour composite in the render pipeline
+The user asked for the composite (parked since Oct 21) to be built in, tested with mocks first.
+
+**Built** (0 units; 129 tests, typecheck, lint, build clean)
+- `src/lib/render/composite.ts` (pure, TypeScript port of the prototype): paint mask = OKLab change between hand and render, opened 5 px (drops YouCam's 1 px slivers); one component per nail; YouCam's lightness pattern (×0.8) recentred on the requested colour, highlights desaturated, photo grain added, soft 1.2 px edge.
+- Two changes from the prototype, found on the real renders: (1) the base is **YouCam's render, not the bare hand**: the pale `#E2D7C9` accent nail was too close to the bare nail to detect and vanished; (2) each nail takes the colour of the **nearest MediaPipe fingertip** (stored hand landmarks; nearest-colour fallback without them): with five close greens, nearest-colour gave the middle nail another finger's green.
+- Not applied to specs with design fingers: the mask split two-tone design nails and they came out torn.
+- `compositeTargets(spec, landmarks)`; `composite-image.ts` decodes/resizes/encodes with **sharp** (now a direct dependency), caps the work size at 2048 px, refuses aspect mismatches (> 2 %), and reports "nothing recoloured" so the raw render is kept.
+- `refreshRender`: after copying a finished Nail VTO render, composites it; the result is `renders/<id>.jpg`, YouCam's original stays as `renders/<id>-youcam.<ext>`. Any failure keeps YouCam's image (a paid render is never lost). Cached old renders are unchanged.
+- Mock: `YOUCAM_MOCK_RESULT=<local image>` makes mock renders return that file (launch config `dev-mock-render`, reads `test-output/mock-render.png`, git-ignored).
+
+**Verified**
+- Offline on all 10 stored phone renders (downloaded from our storage, free): the 5 plain-colour ones composite in 0.35–1.5 s locally; coral chrome comes back coral (YouCam: red), middle green `#1D3326` for requested `#1E3427` (YouCam: `#304037`), the red smoke test barely changes. The 5 with design fingers are skipped.
+- End to end in `dev-mock-render`: hand upload → render → poll → the stored result is the coral composite, original kept. No server errors. Test session, rows, ledger entry and the two render files deleted (the user's hand photo object, shared by content hash, kept).
+
+**Known limits:** chrome streaks remain (softened); a pale polish close to the bare nail keeps YouCam's colour; Vercel timing of the composite (inside the status poll) not measured yet.
