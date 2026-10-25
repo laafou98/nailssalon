@@ -127,6 +127,7 @@ else                         → Nail Transfer (hand + raw inspiration), labelle
 - **Polling:** create task, poll every 2 s (observed 7–10 s end-to-end), 60 s timeout; client polls our `/api/renders/:id`.
 - **Persistence:** result copied to Supabase Storage immediately (YouCam URLs expire in 2 h).
 - **True-colour composite** (`src/lib/render/composite.ts`): plain-colour Nail VTO results are recoloured to the exact requested hue per finger (nearest hand-landmark fingertip), keeping YouCam's mask and shading and adding the photo's grain. YouCam's original is kept as `renders/<id>-youcam.<ext>`; any failure keeps the original.
+- **Realism pass** (`src/lib/render/realism.ts`, Oct 25): every Nail VTO result, design fingers included, after the composite: the nails are the pixels YouCam changed; each gets grain at the photo's measured noise level, gloss brighter than anything nearby (ring P99 + 0.1, at least nail median + 0.25) softly compressed, a ~1 px edge blurred across the outline, and a faint shadow on the skin behind the cuticle (finger direction from the landmarks; 0.25 press-on, 0.12 polish). No colour change; any failure keeps YouCam's image.
 - **Edit loop:** "Make it almond, shorter" changes `shape`/`length` in the spec → new render; everything else stays. This is the demo moment Nail Transfer cannot do.
 
 ### [E] Shade & Stock Engine (server, 0 units)

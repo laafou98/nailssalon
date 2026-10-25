@@ -4,7 +4,7 @@ import { inEllipse, noise } from "@/lib/inspo/synthetic.test-helpers";
 import { deltaE, hexToRgb, rgbToOklab } from "@/lib/inspo/oklab";
 import { designSpecSchema, solidSpec } from "@/lib/spec/types";
 import { type NailTarget, type Raster, compositeTargets, trueColourComposite } from "./composite";
-import { compositeRender } from "./composite-image";
+import { finishRender } from "./composite-image";
 
 type RGB = [number, number, number];
 const W = 120, H = 80;
@@ -127,25 +127,40 @@ describe("compositeTargets", () => {
   });
 });
 
-describe("compositeRender", () => {
+describe("finishRender", () => {
   const png = (r: Raster) =>
     sharp(Buffer.from(r.data), { raw: { width: r.width, height: r.height, channels: 3 } }).png().toBuffer();
+  const decode = async (bytes: Uint8Array): Promise<Raster> => ({
+    width: W, height: H, data: new Uint8Array(await sharp(bytes).removeAlpha().raw().toBuffer()),
+  });
 
   it("returns a JPEG of the composite", async () => {
-    const out = await compositeRender(await png(hand), await png(render([{ cx: 40, cy: 40, rgb: DRIFTED_RED }])), {
+    const out = await finishRender(await png(hand), await png(render([{ cx: 40, cy: 40, rgb: DRIFTED_RED }])), {
       targets: [{ hex: CORAL }],
     });
     expect(out).toMatchObject({ ok: true, nails: 1, recoloured: 1 });
-    if (out.ok) expect((await sharp(out.bytes).metadata()).format).toBe("jpeg");
+    if (out.ok) {
+      expect((await sharp(out.bytes).metadata()).format).toBe("jpeg");
+      expect(deltaE(labOf(patch(await decode(out.bytes), 36, 40)), labOf(hexToRgb(CORAL)))).toBeLessThan(0.04);
+    }
+  });
+
+  it("finishes design renders too, without recolouring them", async () => {
+    const r = render([{ cx: 40, cy: 40, rgb: DRIFTED_RED }]);
+    const out = await finishRender(await png(hand), await png(r), { targets: null });
+    expect(out).toMatchObject({ ok: true, nails: 1, recoloured: 0 });
+    // YouCam's colour stays (the red is not pulled towards anything).
+    if (out.ok) expect(deltaE(labOf(patch(await decode(out.bytes), 36, 40)), labOf(DRIFTED_RED))).toBeLessThan(0.04);
   });
 
   it("keeps YouCam's image when nothing was painted (the mock returns the hand photo)", async () => {
     const bytes = await png(hand);
-    expect(await compositeRender(bytes, bytes, { targets: [{ hex: CORAL }] })).toEqual({ ok: false, reason: "no_nails_recoloured" });
+    expect(await finishRender(bytes, bytes, { targets: [{ hex: CORAL }] })).toEqual({ ok: false, reason: "no_nails_found" });
+    expect(await finishRender(bytes, bytes, { targets: null })).toEqual({ ok: false, reason: "no_nails_found" });
   });
 
   it("refuses a render with a different shape", async () => {
-    const out = await compositeRender(await png(hand), await png(raster(handPx, H, W)), { targets: [{ hex: CORAL }] });
+    const out = await finishRender(await png(hand), await png(raster(handPx, H, W)), { targets: [{ hex: CORAL }] });
     expect(out).toEqual({ ok: false, reason: "aspect_mismatch" });
   });
 });

@@ -6,8 +6,9 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getObject, putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
 import { ENGINES, YouCamError, createTask, getTask } from "@/lib/youcam/client";
 import { compositeTargets } from "./composite";
-import { compositeRender } from "./composite-image";
+import { finishRender } from "./composite-image";
 import { sniffImageType } from "./image-type";
+import { fingerAxes } from "./realism";
 import { type EngineChoice, type EngineName, chooseEngine } from "./router";
 
 /**
@@ -16,8 +17,9 @@ import { type EngineChoice, type EngineName, chooseEngine } from "./router";
  *  1. cache: identical (hand photo, visible spec) requests reuse the first render;
  *  2. unit ledger: per-session and global caps, reserved atomically before the call;
  *  3. refunds: a render that fails gives its unit back (YouCam only charges successes).
- * Results are copied into our storage immediately (YouCam URLs expire after 2 h), then plain-colour
- * Nail VTO renders get the true-colour composite (exact requested hue, photo grain; see composite.ts).
+ * Results are copied into our storage immediately (YouCam URLs expire after 2 h), then Nail VTO renders get the
+ * post-passes: the true-colour composite for plain-colour specs (exact requested hue; composite.ts) and the realism
+ * pass for every spec (photo grain, soft edge, cuticle shadow; realism.ts).
  */
 
 export type RenderView =
@@ -215,7 +217,7 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   const raw = new Uint8Array(await res.arrayBuffer());
   const rawType = sniffImageType(raw);
   if (!rawType) throw new Error("Render result is not an image");
-  const final = await trueColour(row, raw);
+  const final = await finish(row, raw);
   if (final) await putObject(`renders/${row.id}-youcam.${rawType.ext}`, raw, rawType.contentType); // kept for comparison
   const bytes = final ?? raw;
   const type = final ? { ext: "jpg", contentType: "image/jpeg" } : rawType;
@@ -230,23 +232,29 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   return { id, engine, status: "success", resultUrl: await signedUrl(path), cached: false };
 }
 
+/** Cuticle shadow strength: a press-on sits on top of the nail and casts one; polish barely does. */
+const CUTICLE_SHADOW = { press_on_nails: 0.25, nail_polish: 0.12 } as const;
+
 /**
- * The true-colour composite of a finished render, or null to keep YouCam's own image
- * (Transfer, design fingers, nothing recoloured, or any failure: a paid render is never lost).
+ * A finished render after the post-passes (composite for plain colours, realism for all), or null to keep
+ * YouCam's own image (Transfer, no nails found, or any failure: a paid render is never lost).
  */
-async function trueColour(row: RenderRow, raw: Uint8Array): Promise<Uint8Array | null> {
+async function finish(row: RenderRow, raw: Uint8Array): Promise<Uint8Array | null> {
   if (row.engine !== "nail_vto" || !row.design || !row.hand) return null;
-  const targets = compositeTargets(row.design.spec, row.hand.landmarks);
-  if (!targets) return null;
+  const { spec } = row.design;
   try {
-    const outcome = await compositeRender(await getObject(row.hand.path), raw, { targets });
+    const outcome = await finishRender(await getObject(row.hand.path), raw, {
+      targets: compositeTargets(spec, row.hand.landmarks),
+      fingers: fingerAxes(row.hand.landmarks),
+      shadow: CUTICLE_SHADOW[spec.effectType],
+    });
     if (!outcome.ok) {
-      console.info(`render ${row.id}: true-colour composite skipped (${outcome.reason})`);
+      console.info(`render ${row.id}: post-passes skipped (${outcome.reason})`);
       return null;
     }
     return outcome.bytes;
   } catch (error) {
-    console.error(`render ${row.id}: true-colour composite failed`, error);
+    console.error(`render ${row.id}: post-passes failed`, error);
     return null;
   }
 }
