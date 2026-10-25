@@ -1,7 +1,7 @@
 // Tap-to-pick: one tap on an inspiration photo → that nail's outline, colours
 // and a confidence; five picks → a draft DesignSpec. Pure, so it's unit-tested.
 
-import { designSpecSchema, type DesignSpec, FINGERS, type Finger, type PressOnShape } from "@/lib/spec/types";
+import { designSpecSchema, type DesignSpec, FINGERS, type Finger, type PressOnShape, type Texture } from "@/lib/spec/types";
 import { NATURAL_ASPECT, TAPER, type TipShape, taper } from "./design";
 import { type NailColours, nailColours } from "./colours";
 import type { LabImage } from "./oklab";
@@ -179,4 +179,31 @@ export function guessExtensions(picks: (NailPick | null)[], maskWidth: number): 
 /** Turns a polish design into press-on extensions with this shape and length. */
 export function asExtensions(spec: DesignSpec, tip: TipShape, length: number): DesignSpec {
   return designSpecSchema.parse({ ...spec, effectType: "press_on_nails", shape: pressOnShape(tip), length });
+}
+
+/** The client's own changes to what the photo gave: a colour and/or finish per finger. */
+export type FingerEdits = Partial<Record<Finger, { baseHex?: string; texture?: Texture }>>;
+
+/**
+ * Applies the client's edits. A finger with its own colour becomes plain
+ * colour (the design cut-out would still carry the photo's colour) and loses
+ * the photo's accents.
+ */
+export function applyEdits(spec: DesignSpec, edits: FingerEdits): DesignSpec {
+  const fingers = Object.fromEntries(
+    FINGERS.map((f) => {
+      const e = edits[f];
+      const base = spec.fingers[f];
+      if (!e) return [f, base];
+      return [
+        f,
+        {
+          ...base,
+          ...(e.texture && { texture: e.texture }),
+          ...(e.baseHex && { baseHex: e.baseHex, accentHexes: [], kind: "color" as const, designImageId: undefined }),
+        },
+      ];
+    }),
+  ) as DesignSpec["fingers"];
+  return designSpecSchema.parse({ ...spec, fingers });
 }

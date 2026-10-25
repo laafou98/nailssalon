@@ -12,6 +12,8 @@ import {
   type InspirationImage,
   type NailPick,
   type SamOutline,
+  type FingerEdits,
+  applyEdits,
   pickNail,
   sourceFingers,
   typicalArea,
@@ -184,6 +186,10 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
   const [length, setLength] = useState<number | null>(null);
   /** Finish chosen by the user for every nail; null = per nail as read from the photo (Cream if unread). */
   const [finish, setFinish] = useState<Texture | null>(null);
+  /** The client's own colour or finish per finger, over what the photo gave. */
+  const [edits, setEdits] = useState<FingerEdits>({});
+  /** The finger whose editor is open. */
+  const [editing, setEditing] = useState<number | null>(null);
   /** The chosen photo looks like the client's own hand, not a nail design. */
   const [ownHand, setOwnHand] = useState(false);
   /** The photo as stored on the server (vision model input, Nail Transfer reference). */
@@ -221,8 +227,8 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     if (!draft) return null;
     const s = read ? applyReading(draft, read, sources) : draft;
     const fingers = finish ? Object.fromEntries(FINGERS.map((f) => [f, { ...s.fingers[f], texture: finish }])) : s.fingers;
-    return designSpecSchema.parse({ ...s, fingers, ...(inspoId && { source: { kind: "inspiration", imageId: inspoId } }) });
-  }, [picks.length, allPicks, read, sources, inspoId, finish]);
+    return applyEdits(designSpecSchema.parse({ ...s, fingers, ...(inspoId && { source: { kind: "inspiration", imageId: inspoId } }) }), edits);
+  }, [picks.length, allPicks, read, sources, inspoId, finish, edits]);
   /** The finish the chips highlight: the user's choice, or the one every nail was read as. */
   const shownFinish = finish ?? (spec && new Set(FINGERS.map((f) => spec.fingers[f].texture)).size === 1 ? spec.fingers.thumb.texture : null);
   const guess = useMemo(() => (loaded ? guessExtensions(picks, loaded.width) : null), [loaded, picks]);
@@ -287,6 +293,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
     setTaps(swap(taps));
     setFlipped(swap(flipped));
     setUseDesign(swap(useDesign));
+    setEdits({ ...edits, [FINGERS[i]]: edits[FINGERS[j]], [FINGERS[j]]: edits[FINGERS[i]] });
     setRedo([]);
   };
 
@@ -430,6 +437,8 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       setTip(null);
       setLength(null);
       setFinish(null);
+      setEdits({});
+      setEditing(null);
       // Checked after the photo shows, so a slow detector never delays picking.
       looksLikeOwnHand(file).then(setOwnHand, () => setOwnHand(false));
     } catch (e) {
@@ -604,15 +613,22 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               const preview = from !== null ? previews[from] : null;
               const showDesign = useDesign[i] && preview;
               return (
-                <li key={finger} className={`flex flex-col items-center gap-1 rounded-lg text-center ${swapFrom === i ? "bg-amber-500/20" : ""}`} data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined}>
+                <li key={finger} className={`flex flex-col items-center gap-1 rounded-lg text-center ${swapFrom === i ? "bg-amber-500/20" : editing === i ? "bg-zinc-200 dark:bg-zinc-800" : ""}`} data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined}>
                   <div
                     className="relative flex h-14 items-center"
-                    role={swapFrom !== null && i < taps.length ? "button" : undefined}
-                    aria-label={swapFrom !== null ? `Swap with ${LABELS[i].toLowerCase()}` : undefined}
+                    role={f ? "button" : undefined}
+                    aria-label={!f ? undefined : swapFrom !== null ? `Swap with ${LABELS[i].toLowerCase()}` : `Edit the ${LABELS[i].toLowerCase()} nail`}
+                    aria-expanded={swapFrom === null && f ? editing === i : undefined}
                     onClick={() => {
-                      if (swapFrom === null || i >= taps.length) return;
-                      swapFingers(swapFrom, i);
-                      setSwapFrom(null);
+                      if (!f) return;
+                      if (swapFrom !== null) {
+                        if (i < taps.length) {
+                          swapFingers(swapFrom, i);
+                          setSwapFrom(null);
+                        }
+                        return;
+                      }
+                      setEditing(editing === i ? null : i);
                     }}
                   >
                     {showDesign ? (
@@ -652,6 +668,62 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
               );
             })}
           </ul>
+          {editing !== null && spec && (
+            <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-3 text-xs dark:border-zinc-700" data-testid="finger-editor">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">{LABELS[editing]} nail</p>
+                <button onClick={() => setEditing(null)} className="underline">Done</button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span>Colour</span>
+                <label className="flex h-8 items-center gap-2 rounded-full border border-zinc-300 px-2 dark:border-zinc-700">
+                  <input
+                    type="color"
+                    value={spec.fingers[FINGERS[editing]].baseHex}
+                    onChange={(e) => {
+                      const hex = e.target.value.toUpperCase();
+                      setEdits({ ...edits, [FINGERS[editing]]: { ...edits[FINGERS[editing]], baseHex: hex } });
+                      // The design cut-out would still show the photo's colour, so a recoloured nail renders as colour.
+                      setUseDesign(useDesign.map((v, k) => (k === editing ? false : v)));
+                    }}
+                    className="h-5 w-5"
+                    aria-label={`${LABELS[editing]} colour`}
+                  />
+                  {spec.fingers[FINGERS[editing]].baseHex}
+                </label>
+                {edits[FINGERS[editing]]?.baseHex && (
+                  <button onClick={() => setEdits({ ...edits, [FINGERS[editing]]: { ...edits[FINGERS[editing]], baseHex: undefined } })} className="underline">
+                    Back to the photo&apos;s colour
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="mr-1">Finish</span>
+                {TEXTURES.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setEdits({ ...edits, [FINGERS[editing]]: { ...edits[FINGERS[editing]], texture: edits[FINGERS[editing]]?.texture === t ? undefined : t } })}
+                    aria-pressed={spec.fingers[FINGERS[editing]].texture === t}
+                    className={`rounded-full border px-2 py-0.5 ${spec.fingers[FINGERS[editing]].texture === t ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
+                  >
+                    {TEXTURE_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  const e = edits[FINGERS[editing]];
+                  if (!e) return;
+                  setEdits(Object.fromEntries(FINGERS.map((f) => [f, { ...edits[f], ...(e.baseHex && { baseHex: e.baseHex }), ...(e.texture && { texture: e.texture }) }])));
+                  if (e.baseHex) setUseDesign(FINGERS.map(() => false));
+                }}
+                disabled={!edits[FINGERS[editing]]?.baseHex && !edits[FINGERS[editing]]?.texture}
+                className="self-start rounded-full border border-zinc-300 px-3 py-1 disabled:opacity-40 dark:border-zinc-700"
+              >
+                Apply to all nails
+              </button>
+            </div>
+          )}
           {taps.filter(Boolean).length >= 2 && (
             <div className="flex items-center gap-2 text-xs">
               {swapFrom === null ? (
@@ -667,7 +739,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
             </div>
           )}
           <p className="text-xs text-zinc-500">
-            &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
+            Tap a nail above to change its colour or finish. &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
           </p>
           {reading && (
             <p className="text-sm" aria-live="polite" data-reading={reading.status}>

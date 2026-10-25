@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { GatedPhoto } from "@/lib/hand-gate/browser";
 import type { EngineChoice, EngineName } from "@/lib/render/router";
 import { FINGERS, type DesignSpecInput, type Texture } from "@/lib/spec/types";
+import CompareSlider from "./CompareSlider";
 import InspoPicker from "./InspoPicker";
 
 /** Either one colour and finish on every nail, or per-finger colours picked from an inspiration photo. */
@@ -56,7 +57,6 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
   const [hex, setHex] = useState(SWATCHES[0].hex);
   const [texture, setTexture] = useState<Texture>("cream");
   const [render, setRender] = useState<Render>({ status: "idle" });
-  const [showBefore, setShowBefore] = useState(false);
   const [mode, setMode] = useState<"colour" | "inspiration">("colour");
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The last spec sent, so an approximate Nail Transfer result can be redone per finger. */
@@ -114,7 +114,6 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
     setLastSpec(spec);
     if (pollRef.current) clearTimeout(pollRef.current);
     setRender({ status: "running" });
-    setShowBefore(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
     try {
       const res = await fetch("/api/renders", {
@@ -132,27 +131,20 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
   };
 
   const busy = render.status === "running" || upload.status !== "ready";
-  const shown = render.status === "success" && !showBefore ? render.resultUrl : photo.url;
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4">
       <div className="relative overflow-hidden rounded-2xl bg-zinc-900">
-        {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL / local blob */}
-        <img src={shown} alt={shown === photo.url ? "Your hand" : "Your hand with the polish applied"} className="block w-full" />
+        {render.status === "success" ? (
+          <CompareSlider before={photo.url} after={render.resultUrl} alt="Your hand with the polish applied" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element -- local blob
+          <img src={photo.url} alt="Your hand" className="block w-full" />
+        )}
         {render.status === "running" && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm font-medium text-white">
             Painting your nails… (about 10 s)
           </div>
-        )}
-        {render.status === "success" && (
-          <button
-            onPointerDown={() => setShowBefore(true)}
-            onPointerUp={() => setShowBefore(false)}
-            onPointerLeave={() => setShowBefore(false)}
-            className="absolute bottom-3 right-3 rounded-full bg-black/60 px-3 py-1.5 text-xs font-medium text-white"
-          >
-            Hold to compare
-          </button>
         )}
       </div>
 

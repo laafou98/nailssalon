@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 5 of 12 (Oct 24, 2026). Pushed: MobileSAM outlines, the switch from DeepSeek to Claude for the design reading. Committed, **not yet pushed**: outliner status line, stricter mask choice, box prompt (see the last session entry). Committed, **not yet pushed**: automatic nail detection (Claude locates the nails, the picker fills the taps), finger swapping, smooth outlines. **Next:** push; phone test of the automatic picks on the brown photo and a two-hand photo, then a render (≈ 1 unit).
+- **Day:** 5 of 12 (Oct 24, 2026). Pushed: MobileSAM outlines, the switch from DeepSeek to Claude for the design reading. Committed, **not yet pushed**: outliner status line, stricter mask choice, box prompt (see the last session entry). Pushed: automatic nail detection, finger swapping, smooth outlines. Committed, **not yet pushed**: Day 6 spec editor (colour and finish per finger) and the before/after slider. **Next:** push; phone test of automatic picks, the editor and the slider with one render (≈ 1 unit); then Day 7 (skin tone, polish matching, quote).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -34,8 +34,8 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 2 | Oct 22 | [A] Hand Quality Gate with live guidance | ✅ Done (Oct 21) |
 | 3 | Oct 23 | `DesignSpec` + `toNailVtoPayload` + render route + cache + unit ledger | ✅ Done (Oct 21) |
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
-| 5 | Oct 25 | [C] DeepSeek semantics + design PNGs; [D] router with Transfer fallback | 🟡 Built; Oct 24 fixes (reply parsing, finish picker, SlimSAM outlines) to push and re-test; Transfer render still to confirm |
-| 6 | Oct 26 | Spec editor UI, before/after compare | |
+| 5 | Oct 25 | [C] Claude semantics + design PNGs; [D] router with Transfer fallback; MobileSAM outlines; automatic nail detection | ✅ Done (Oct 24–25); Transfer render still to confirm on the phone |
+| 6 | Oct 26 | Spec editor UI, before/after compare | ✅ Done (Oct 25): per-finger colour and finish, apply to all, compare slider |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
 | 9 | Oct 29 | [F] Fidelity scorer; i18n (FR, AR + RTL) | |
@@ -326,3 +326,14 @@ The user asked whether nails could be found automatically on upload (with a way 
 **Verified** (`dev-live`, real Claude, no renders, phone size, temporary page deleted): inspo-9 (two hands) → all five found and outlined by MobileSAM in 11 s, labels right, swap thumb↔index moved the labels and colours; outlines smooth. Test inspiration row and file deleted.
 
 **Known limits:** a cut-off thumb still gets a small fragment (SAM, not detection); the diagonal-nail box leak remains (ring on inspo-9); a two-hand photo gets the hand with most full nails, the other needs manual taps; detection adds ≈ 5–12 s and a few cents per photo.
+
+### Session 8, Oct 25, 2026: Day 6, spec editor and before/after slider
+The user chose to push on building and refine later (the true-colour composite decision stays parked).
+
+**Built** (0 units; 117 tests, typecheck, lint, build clean)
+- **Per-finger editor** (`InspoPicker`): tapping a nail in the finger list opens an editor (`data-testid="finger-editor"`): a colour input with "Back to the photo's colour", the nine finish chips, and "Apply to all nails". `applyEdits` (`pick.ts`, 1 test) lays the edits over the spec; a recoloured nail becomes plain colour with no accents (its design cut-out would still carry the photo's colour), and its Design switch is turned off. Edits follow a finger swap and reset with a new photo. The global Finish row still sets all five.
+- **Before/after slider** (`CompareSlider.tsx`): the render with the original photo revealed up to a draggable handle (a full-size range input, so touch, mouse and keyboard all work), replacing "Hold to compare" in `TryOn`.
+
+**Verified** (`dev-mock`, phone size, temporary page deleted): inspo-8 tapped manually (the mock finds no nails automatically, as designed); ring → #3366CC + Matte with Design off; Apply to all → all five #3366CC/matte; the slider splits the two images at the handle. Test inspiration row and file deleted.
+
+**Not done (refine later):** per-finger editing in the one-colour mode (it has one colour and finish for all); shape and length per finger (one shape and length for the hand, as YouCam's press-on effect takes them).

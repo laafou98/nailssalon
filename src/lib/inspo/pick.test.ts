@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { solidSpec } from "@/lib/spec/types";
+import { applyEdits } from "./pick";
 import { toLabImage } from "./oklab";
 import { asExtensions, draftSpec, guessExtensions, type NailPick, pickNail, sourceFingers, typicalArea, withDesigns } from "./pick";
 import { prepareImage } from "./region";
@@ -100,5 +102,17 @@ describe("asExtensions", () => {
   it("switches the spec to press-on nails with a shape and length", () => {
     const spec = asExtensions(draftSpec([fake("#112233"), null, null, null, null])!, "almond", 1.8);
     expect(spec).toMatchObject({ effectType: "press_on_nails", shape: "almond_oval", length: 1.8 });
+  });
+});
+
+describe("applyEdits", () => {
+  it("overrides colour and finish per finger, turning a recoloured design into plain colour", () => {
+    const base = solidSpec("#112233", "cream");
+    const spec = { ...base, fingers: { ...base.fingers, ring: { ...base.fingers.ring, kind: "design" as const, designImageId: "11111111-1111-4111-8111-111111111111", accentHexes: ["#FFFFFF"], pattern: "art" as const } } };
+    const out = applyEdits(spec, { ring: { baseHex: "#AABBCC" }, index: { texture: "jelly" } });
+    expect(out.fingers.ring).toMatchObject({ kind: "color", baseHex: "#AABBCC", accentHexes: [], texture: "cream" });
+    expect(out.fingers.ring.designImageId).toBeUndefined();
+    expect(out.fingers.index).toMatchObject({ baseHex: "#112233", texture: "jelly" });
+    expect(out.fingers.thumb).toEqual(base.fingers.thumb);
   });
 });
