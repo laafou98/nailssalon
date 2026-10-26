@@ -193,7 +193,7 @@ RLS: salon owners read/write their own salon rows. Client sessions are accessed 
 | Hand landmarks | `@mediapipe/tasks-vision` (browser) |
 | Colour science | `culori` (OKLab, CIELAB, CIEDE2000) |
 | Image processing | `sharp` (server) |
-| Vision model | Claude Opus 5.5 (`claude-opus-5-5`, override with `VISION_MODEL`) via `@anthropic-ai/sdk`: one call per inspiration photo, effort `low`, structured outputs (`readingFormat`) so the reply always parses, server-side refusal fallback. Switched from DeepSeek on Oct 24 (its first real reply didn't parse, and Zscaler blocks it locally) |
+| Vision model | Claude Sonnet 5.5 (`claude-sonnet-5-5`, override with `VISION_MODEL`; Opus 5.5 until Oct 26, see PROGRESS session 12 for the comparison) via `@anthropic-ai/sdk`: one call per inspiration photo, effort `low`, structured outputs (`readingFormat`) so the reply always parses, server-side refusal fallback. Switched from DeepSeek on Oct 24 (its first real reply didn't parse, and Zscaler blocks it locally) |
 | DB / storage / auth | Supabase |
 | Validation | `zod` |
 | Tests | Vitest for spec → payload, colour maths, router, cache keys |

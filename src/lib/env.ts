@@ -5,7 +5,7 @@ const serverSchema = z.object({
   YOUCAM_API_KEY: z.string().min(1, "YOUCAM_API_KEY is not set"),
   ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is not set"),
   /** Claude model for the design reading. */
-  VISION_MODEL: z.string().min(1).default("claude-opus-5-5"),
+  VISION_MODEL: z.string().min(1).default("claude-sonnet-5-5"),
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
   SUPABASE_SECRET_KEY: z.string().min(1, "SUPABASE_SECRET_KEY is not set"),
   UNITS_SESSION_CAP: z.coerce.number().int().positive().default(15),

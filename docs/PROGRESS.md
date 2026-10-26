@@ -13,7 +13,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **YouCam units used:** 13 of 1,000 by the ledger (Oct 25); was noted as about 6 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
-- **Vision model** (Oct 24): switched from DeepSeek to **Claude** (`claude-opus-5-5`, effort `low`, structured outputs). Key is set in `.env.local` and on Vercel (`/api/health` reports `anthropic: true`, Oct 26). Real readings have run: Claude's local tests (sessions 5 and 7) and every inspiration photo uploaded since Oct 24 (one nail-location call per photo plus one design reading, a few cents each). `DEEPSEEK_API_KEY` can be removed from Vercel.
+- **Vision model** (Oct 24, Oct 26): switched from DeepSeek to **Claude**; since Oct 26 the default is **Sonnet 5.5** (`claude-sonnet-5-5`, effort `low`, structured outputs), half Opus's cost with the same answers on the 7 test photos (session 12). If Vercel has a `VISION_MODEL` variable it overrides this; it should be unset. Key is set in `.env.local` and on Vercel (`/api/health` reports `anthropic: true`, Oct 26). Real readings have run: Claude's local tests (sessions 5 and 7) and every inspiration photo uploaded since Oct 24 (one nail-location call per photo plus one design reading, a few cents each). `DEEPSEEK_API_KEY` can be removed from Vercel.
 - **Router threshold** (Oct 23): Transfer below spec confidence 0.6 (pick confidence averaged with the model's). Tune once real readings come in; maybe too eager with unsure outlines.
 - **Curled-fingers hand pose** (Oct 22): now accepted by the gate (palm side + fingertips folded near their knuckles). Rule set from geometry; confirm live on the phone (free), then one real render to see if YouCam handles it.
 - **Nail outlining** (Oct 22, Oct 24): the colour flood failed on the user's brown-on-brown photo (1 of 5 right). SlimSAM fixed the outlines but crashed iPhone Safari; **MobileSAM** (Oct 24) outlines all 5 on that photo (now `test-output/inspo/inspo-8.jpg`), in iOS Simulator Safari too. The picker now says which outliner produced each outline. Still weak: diagonal nails (the box prompt is axis-aligned), marble/smoke art (SAM follows the pattern), half-hidden thumbs as the first pick (they set the "typical" size). **Phone-confirmed (Oct 24, 16:57 Casablanca):** no crash, "Outlines by MobileSAM", 5/5 on the brown photo (ring outline slightly over the cuticle side), finishes read (Jelly on the swirl nails, Cream elsewhere).
@@ -396,4 +396,17 @@ Started from the session-10 feedback (extensions look like flat stickers). 0 You
 The user gave Claude a 100-unit test budget and approved one chrome render. **1 unit spent** (ledger total 13).
 - Rendered coral `#F0645A` metallic on the hand of the old chrome render `8a197d4f` with the softer preset 70/45/45 (`dev-live`, render `c0f094c8`; the paid render and its rows are kept). Comparison: `test-output/realism/chrome-old-vs-soft.jpg` (git-ignored).
 - Result: same faceted streak pattern, barely lower contrast (luma sd 40.4 → 38.7, P95 160 → 158, P99 188 → 185), highlight edges a bit more jagged. Kept the old preset; nothing changed in code.
+
+### Session 12, Oct 26, 2026: cheaper vision model
+The user asked whether a cheaper model would do. Built `scripts/compare-vision/` (paid, on demand only; separate Vitest config so `npm test` never runs it): the app's own prompts and formats for both calls (nail locations, design reading) on the 7 test photos, 3 models × 2 runs, same crops for every model (cut around Opus's first answer). Output in `test-output/model-compare/` (git-ignored): `results.json` and overlays. Total spend ≈ $0.73.
+
+| Per photo (locate + reading) | Cost | Time (locate / reading) | Finger labels (14 runs) | Reading |
+|---|---|---|---|---|
+| Opus 5.5 | $0.033 | 4.7 s / 3.6 s | all right (one run missed a half-hidden thumb) | reference |
+| Sonnet 5.5 | $0.017 | 3.7 s / 3.6 s | all right | same as Opus on 5 of 7 photos; called nude accents "sheer"/"jelly" (inspo-8, inspo-9) and inspo-6 "stiletto" |
+| Haiku 5.5 | $0.0014 | 6.6 s / 4.0 s | **3 of 14 wrong**: whole hand reversed thumb↔pinky (inspo-7, inspo-8) or shifted by one finger (inspo-9) | length always one step shorter ("medium" on long nails); lost the chrome outline art on inspo-6 once; inconsistent French vs art on inspo-5 |
+
+**Decision:** default `VISION_MODEL` → `claude-sonnet-5-5` (both calls). Haiku is 25× cheaper but its label reversals would make the user swap fingers by hand, and its length bias feeds the extension guess. Not tried: Haiku for the reading only (would save ≈ $0.009 per photo).
+
+**Next step:** push (with the user's OK), then one phone test of an inspiration photo to confirm Sonnet on Vercel.
 
