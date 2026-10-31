@@ -20,8 +20,8 @@ export interface ColourMatch {
   deltaE: number;
   /** Plain-language closeness, e.g. "practically identical". */
   label: string;
-  /** Applied over the polish to get the spec's finish (matte top coat on a gloss gel). */
-  topCoat?: "matte";
+  /** Applied over the polish to get the spec's finish: a matte top coat, or chrome powder on a gloss gel. */
+  topCoat?: "matte top coat" | "chrome powder";
   alternates: { polish: Polish; deltaE: number }[];
 }
 
@@ -63,9 +63,15 @@ export function matchColour(hex: string, texture: Texture, polishes: Polish[]): 
     polish: best.polish,
     deltaE: round(best.deltaE),
     label: closeness(best.deltaE),
-    topCoat: texture === "matte" && best.polish.finish !== "matte" ? "matte" : undefined,
+    topCoat: topCoatFor(texture, best.polish.finish),
     alternates: rest.slice(0, 2).map((r) => ({ polish: r.polish, deltaE: round(r.deltaE) })),
   };
+}
+
+function topCoatFor(wanted: Texture, polish: Texture): ColourMatch["topCoat"] {
+  if (wanted === "matte" && polish !== "matte") return "matte top coat";
+  if (FAMILY[wanted] === "metal" && FAMILY[polish] !== "metal") return "chrome powder";
+  return undefined;
 }
 
 export function matchSpec(spec: DesignSpec, polishes: Polish[]): Record<Finger, FingerMatch> | null {

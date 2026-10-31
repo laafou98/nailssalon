@@ -57,14 +57,17 @@ describe("matchColour", () => {
     expect(matchColour("#C9A75A", "shimmer_coarse", CATALOGUE)!.polish.name).toBe("Paillettes Or");
   });
 
-  it("falls back to any finish when the family has nothing close", () => {
-    expect(matchColour("#B0123A", "metallic", CATALOGUE)!.polish.name).toBe("Cerise");
+  it("falls back to any finish when the family has nothing close, adding chrome powder", () => {
+    const m = matchColour("#B0123A", "metallic", CATALOGUE)!;
+    expect(m.polish.name).toBe("Cerise");
+    expect(m.topCoat).toBe("chrome powder");
+    expect(matchColour("#C0C2C8", "metallic", CATALOGUE)!.topCoat).toBeUndefined();
   });
 
   it("gets matte from a matte top coat over a gloss gel", () => {
     const m = matchColour("#1F2A55", "matte", CATALOGUE)!;
     expect(m.polish.name).toBe("Marine");
-    expect(m.topCoat).toBe("matte");
+    expect(m.topCoat).toBe("matte top coat");
   });
 
   it("returns null with an empty catalogue", () => {

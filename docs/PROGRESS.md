@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** Oct 31, 2026 (plan Day 11; build is at Day 7). Session 13 built polish matching and the quote (a slim Day 7: no skin tone/undertone). Not pushed yet. **Rescoped plan (user, Oct 31):** drop Day 9 (fidelity scorer, i18n); Day 8 recipe card + WhatsApp next; Nov 1 README, Devpost text, screenshots, demo video, submit. Phone checks still open: Sonnet reading on Vercel, one extension render (≈ 1 unit).
+- **Day:** Oct 31, 2026 (plan Day 11; build is at Day 8). Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -40,7 +40,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 5 | Oct 25 | [C] Claude semantics + design PNGs; [D] router with Transfer fallback; MobileSAM outlines; automatic nail detection | ✅ Done (Oct 24–25); Transfer render still to confirm on the phone |
 | 6 | Oct 26 | Spec editor UI, before/after compare | ✅ Done (Oct 25): per-finger colour and finish, apply to all, compare slider |
 | 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | ✅ Slim version (Oct 31): seeded demo catalogue, ΔE2000 matching, quote. Skin tone cut |
-| 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
+| 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | ✅ Done (Oct 31): `/r/<id>`, link-preview image, `wa.me` with the client picking the contact |
 | 9 | Oct 29 | [F] Fidelity scorer; i18n (FR, AR + RTL) | ✂️ Cut (Oct 31, behind schedule) |
 | 10 | Oct 30 | Real-photo testing, failure states, polish | |
 | 11 | Oct 31 | Demo video, screenshots, README, Devpost text | |
@@ -424,3 +424,15 @@ Nothing happened Oct 27–30, so the plan was rescoped with the user: Day 9 (fid
 **Verified** with `dev-mock`: the API on a mixed extensions spec (Cerise ΔE 2.7, Chrome Argent 1.6, Marine + matte top coat, French ring; 325 MAD, 95 min), and the card in the UI at phone width after a mock render. The mock render's rows, storage object and fake ledger unit were deleted (ledger back to 13).
 
 **Next step:** push (with the user's OK); Day 8: recipe card share page `/r/<id>` + WhatsApp link (needs the salon's WhatsApp number, or `wa.me/?text=` to let the client pick a contact).
+
+**Day 8, same session: recipe card and WhatsApp** (0 units)
+- **User decision:** the WhatsApp message opens with no number (`https://wa.me/?text=…`), so the client picks who to send it to. No salon number needed.
+- `src/lib/recipe/format.ts` (pure, 3 tests): finger grouping (moved out of the card), service label ("Extensions, almond, medium" from the nearest length step), and the pre-filled message: service, one line per polish group (+ top coat, art colours, pattern), estimate, link.
+- `src/lib/recipe/service.ts` + `POST /api/recipes` (`{ renderId }`, caller's own finished render): freezes the polish matches and quote into a `recipes` row (one per render, repeat calls return it) and returns `{ id, url, whatsapp }`.
+- `/r/[id]`: public recipe page (Suspense + params, partial prerender): render photo (fresh signed URL per request), polishes per finger group with hex and ΔE, estimate with a "technician confirms" note, link to try your own. `opengraph-image.tsx`: 1200×630 link preview (hand photo anchored at the top, polishes, total, minutes), so WhatsApp shows a card.
+- The salon card makes the recipe as soon as the render finishes, so "Send the recipe on WhatsApp" is a plain link (iOS blocks opening an app from a tap that first waits on the network).
+- Matching: a chrome/pearl look with no metallic polish within ΔE 10 now says "+ chrome powder" over the nearest gel (like matte's "+ matte top coat"); `topCoat` is now that label.
+
+**Verified** with `dev-mock` + `npm run build`: mock render → recipe created → WhatsApp text ("All nails: Maison Corail + chrome powder · 200 MAD, about 45 min · link"), recipe page at phone width, og:image meta and a 200 PNG preview (Satori needs single-text-child divs; fixed). Test rows, storage object and the fake ledger unit deleted (ledger 13, recipes 0). A first recipe was made by a stale dev module (no chrome powder); recreated after a restart, so not a code issue.
+
+**Next step:** push (with the user's OK), phone test: render → Send on WhatsApp → check the preview card in the chat. Then Nov 1 submission material.

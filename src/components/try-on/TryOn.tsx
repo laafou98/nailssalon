@@ -31,7 +31,7 @@ type Upload = { status: "uploading" } | { status: "ready"; imageId: string } | {
 type Render =
   | { status: "idle" }
   | { status: "running" }
-  | { status: "success"; resultUrl: string; cached: boolean; engine: EngineName }
+  | { status: "success"; id?: string; resultUrl: string; cached: boolean; engine: EngineName }
   | { status: "error"; error: string };
 
 const POLL_MS = 2000;
@@ -42,7 +42,7 @@ type ApiReply = { error?: string; imageId?: string; id?: string; status?: string
 /** The finished states the render API returns (success with a URL, or an error). */
 const toRender = (json: ApiReply): Render =>
   json.status === "success" && json.resultUrl
-    ? { status: "success", resultUrl: json.resultUrl, cached: Boolean(json.cached), engine: json.engine ?? "nail_vto" }
+    ? { status: "success", id: json.id, resultUrl: json.resultUrl, cached: Boolean(json.cached), engine: json.engine ?? "nail_vto" }
     : { status: "error", error: json.error ?? "unknown_error" };
 
 async function readJson(res: Response): Promise<ApiReply> {
@@ -227,7 +227,7 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
           )}
         </div>
       )}
-      {render.status === "success" && lastSpec && <SalonMatch key={JSON.stringify(lastSpec)} spec={lastSpec} />}
+      {render.status === "success" && lastSpec && <SalonMatch key={render.id ?? JSON.stringify(lastSpec)} spec={lastSpec} renderId={render.id} />}
       {render.status === "success" && render.cached && (
         <p className="text-xs text-zinc-500">Already rendered this exact look, so no new render was needed.</p>
       )}
