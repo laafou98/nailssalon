@@ -6,6 +6,7 @@ import type { EngineChoice, EngineName } from "@/lib/render/router";
 import { FINGERS, type DesignSpecInput, type Texture } from "@/lib/spec/types";
 import CompareSlider from "./CompareSlider";
 import InspoPicker from "./InspoPicker";
+import SalonMatch from "./SalonMatch";
 
 /** Either one colour and finish on every nail, or per-finger colours picked from an inspiration photo. */
 
@@ -226,6 +227,7 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
           )}
         </div>
       )}
+      {render.status === "success" && lastSpec && <SalonMatch key={JSON.stringify(lastSpec)} spec={lastSpec} />}
       {render.status === "success" && render.cached && (
         <p className="text-xs text-zinc-500">Already rendered this exact look, so no new render was needed.</p>
       )}

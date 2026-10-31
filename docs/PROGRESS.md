@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** 6 of 12 (Oct 25, 2026). Pushed and deployed (Oct 25, `d838248`): everything through session 11 (design cut-out cleanup, realism pass on every Nail VTO render, calibrated extension lengths). **Next:** phone test of an extension render from an art inspiration (≈ 1 unit, also checks the new Long step); then Day 7 (skin tone, polish matching, quote).
+- **Day:** Oct 31, 2026 (plan Day 11; build is at Day 7). Session 13 built polish matching and the quote (a slim Day 7: no skin tone/undertone). Not pushed yet. **Rescoped plan (user, Oct 31):** drop Day 9 (fidelity scorer, i18n); Day 8 recipe card + WhatsApp next; Nov 1 README, Devpost text, screenshots, demo video, submit. Phone checks still open: Sonnet reading on Vercel, one extension render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -39,9 +39,9 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 | 4 | Oct 24 | [B] Tap-to-pick nail crops on inspiration photos (was: landmark crops), colour clustering | ✅ Done (Oct 21) |
 | 5 | Oct 25 | [C] Claude semantics + design PNGs; [D] router with Transfer fallback; MobileSAM outlines; automatic nail detection | ✅ Done (Oct 24–25); Transfer render still to confirm on the phone |
 | 6 | Oct 26 | Spec editor UI, before/after compare | ✅ Done (Oct 25): per-finger colour and finish, apply to all, compare slider |
-| 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | |
+| 7 | Oct 27 | [E] Skin tone, undertone, polish matching, quote; salon catalogue | ✅ Slim version (Oct 31): seeded demo catalogue, ΔE2000 matching, quote. Skin tone cut |
 | 8 | Oct 28 | Recipe card + share page + WhatsApp hand-off | |
-| 9 | Oct 29 | [F] Fidelity scorer; i18n (FR, AR + RTL) | |
+| 9 | Oct 29 | [F] Fidelity scorer; i18n (FR, AR + RTL) | ✂️ Cut (Oct 31, behind schedule) |
 | 10 | Oct 30 | Real-photo testing, failure states, polish | |
 | 11 | Oct 31 | Demo video, screenshots, README, Devpost text | |
 | 12 | Nov 1 | Buffer, final QA, **submit** | |
@@ -410,3 +410,17 @@ The user asked whether a cheaper model would do. Built `scripts/compare-vision/`
 
 **Next step:** push (with the user's OK), then one phone test of an inspiration photo to confirm Sonnet on Vercel.
 
+
+### Session 13, Oct 31, 2026: polish matching and quote (slim Day 7)
+Nothing happened Oct 27–30, so the plan was rescoped with the user: Day 9 (fidelity scorer, French/Arabic) is cut, skin tone/undertone is cut, and the remaining time goes to Day 8 (recipe card, WhatsApp) and the submission material.
+
+**Built** (0 YouCam units)
+- Migration `0004_demo_salon.sql` (applied): salon `demo` ("Studio Demo", Casablanca, MAD, no WhatsApp number yet), 44 polishes of a **fictional** house gel line "Maison" (creams, jellies, sheers, chromes, pearl, shimmers) with precomputed CIELAB, and price rules: gel manicure 150 MAD, extensions +150, per finger French 15 / ombré 20 / cat eye 20 / art 30 / chrome 10; 45 min + 10 per art finger + 40 for extensions. All values are demo guesses; re-runnable.
+- `src/lib/shade/cielab.ts`: sRGB → CIELAB (D65) and CIEDE2000, tested against Sharma et al.'s published pairs.
+- `src/lib/shade/match.ts`: per finger, the nearest in-stock polish of the same finish family (gloss / metal / shimmer; matte = gloss gel + matte top coat), falling back to any finish if the family has nothing within ΔE 10; 2 alternates; plain-language closeness (< 1 identical, < 2 practically identical, < 5 very close, < 10 close). Design fingers also match their accent colours. `quoteSpec` turns the spec into price lines, total and chair minutes. 15 tests.
+- `src/lib/shade/catalogue.ts` + `POST /api/quote` (`{ spec, salon? }` → salon, matches, quote).
+- `SalonMatch.tsx`: under every successful render, "At Studio Demo, Casablanca": fingers sharing a polish collapse into one row (design swatch next to polish swatch, ΔE, alternates), then the price lines, total and minutes.
+
+**Verified** with `dev-mock`: the API on a mixed extensions spec (Cerise ΔE 2.7, Chrome Argent 1.6, Marine + matte top coat, French ring; 325 MAD, 95 min), and the card in the UI at phone width after a mock render. The mock render's rows, storage object and fake ledger unit were deleted (ledger back to 13).
+
+**Next step:** push (with the user's OK); Day 8: recipe card share page `/r/<id>` + WhatsApp link (needs the salon's WhatsApp number, or `wa.me/?text=` to let the client pick a contact).
