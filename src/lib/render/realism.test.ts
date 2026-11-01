@@ -90,6 +90,28 @@ describe("realismPass", () => {
     expect(stripeL(brightOut)).toBeGreaterThan(stripeL(dimOut) + 0.15);
   });
 
+  it("spreads hard gloss stripes into a soft sheen when asked, and leaves art alone otherwise", () => {
+    const stripe = (x: number): boolean => x >= NAIL.cx + 2 && x <= NAIL.cx + 3;
+    const glossy = (x: number): RGB => (stripe(x) ? [255, 255, 255] : RED);
+    const r = render(hand, glossy);
+    const contrast = (img: Raster) => lab(px(img, NAIL.cx + 2, NAIL.cy)).L - lab(px(img, NAIL.cx - 5, NAIL.cy)).L;
+    const soft = realismPass(hand, r, { softenGloss: true }).image;
+    const kept = realismPass(hand, r).image;
+    expect(contrast(kept)).toBeGreaterThan(0.2);
+    expect(contrast(soft)).toBeLessThan(0.08);
+    // The stripe takes the polish's colour, not a grey.
+    expect(deltaE(lab(px(soft, NAIL.cx + 2, NAIL.cy)), lab(RED))).toBeLessThan(0.1);
+    // The nail's rim keeps its colour (no paint pushed onto the skin).
+    expect(px(soft, NAIL.cx, NAIL.cy + NAIL.ry + 3)).toEqual(px(kept, NAIL.cx, NAIL.cy + NAIL.ry + 3));
+  });
+
+  it("measures grain on the smoothest parts, not on a textured background", () => {
+    // Skin right around the nail, a coarse knit further out: the ring sees both.
+    const knit = raster((x, y) => (Math.hypot(x - NAIL.cx, (y - NAIL.cy) * 0.7) < 22 ? handPx()(x, y) : SKIN.map((c) => c + noise(x, y) * 60) as RGB));
+    const sd = nailStats(realismPass(knit, render(knit)).image).sd;
+    expect(sd).toBeLessThan(6);
+  });
+
   it("darkens the skin behind the cuticle edge only, and only with the finger's direction", () => {
     const r = render(hand);
     const below = (img: Raster) => lab(px(img, NAIL.cx, NAIL.cy + NAIL.ry + 1)).L; // cuticle side

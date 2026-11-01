@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** Oct 31, 2026 (plan Day 11; build is at Day 8). Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
+- **Day:** Nov 1, 2026 (submission day). Session 15 fixed the render look (gloss stripes, sandpaper grain, jelly, dark rim), 0 units, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -22,7 +22,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **Chrome finish** (Oct 25): the post-passes fix the colour and dull the glare but can't remove YouCam's hard faceted streaks. Tested a softer metallic preset (`reflection 70, contrast 45, roughness 45` vs 90/70/20) with one real render (1 unit, render `c0f094c8`, same hand and coral as `8a197d4f`): the facets keep their shape, brightness spread only 40.4 → 38.7, highlights unchanged (P99 188 → 185), slightly more jagged highlight edges. **Not applied** (not worth changing every metallic cache key). The facet pattern seems built into YouCam's metallic look; options if it matters: a much flatter preset (e.g. 40/20/80, 1 more unit) or showing chrome as a "shimmer" finish.
 - **Product decision (user, Oct 22):** natural length is a feature, not a bug. Keep both modes; "Extensions" is a different salon service and price (feeds the Day 7 quote and the recipe card).
 - **Phone test of tap-to-pick** (Day 4): colours worked on the user's phone (Oct 22); the art wasn't copied, which led to design PNGs.
-- **Render realism** (Oct 25): two post-passes on Nail VTO results: the true-colour composite (`composite.ts`, plain-colour specs only: exact hue per finger) and the realism pass (`realism.ts`, every spec: grain, soft edge, glare, cuticle shadow). Not applied to Transfer. YouCam's original is kept next to the result as `renders/<id>-youcam.<ext>`. Status poll that finishes a render took 4.6–5 s locally with both passes (download, passes, two uploads); Vercel timing not measured. Not yet seen on the phone.
+- **Render realism** (Oct 25, Nov 1): gloss stripes now spread into a soft sheen, grain from the photo's smoothest parts, jelly/sheer keep YouCam's paint, no dark rim (session 15). Two post-passes on Nail VTO results: the true-colour composite (`composite.ts`, plain-colour specs only: exact hue per finger) and the realism pass (`realism.ts`, every spec: grain, soft edge, glare, cuticle shadow). Not applied to Transfer. YouCam's original is kept next to the result as `renders/<id>-youcam.<ext>`. Status poll that finishes a render took 4.6–5 s locally with both passes (download, passes, two uploads); Vercel timing not measured. Not yet seen on the phone.
 - **Camera:** confirm on the phone whether the accepted photo says "camera photo" (full-res ImageCapture) or "video frame".
 - **Known limits:** tap-to-pick tuned on 3 photos only (half-hidden thumbs can leak into look-alike backgrounds; chrome outlines aren't accents). Side-on thumbs still get painted by YouCam.
 - **Tooling:** the Vercel MCP returns 403 for deployments and runtime logs. Check deploys with `gh api repos/laafou98/nailssalon/commits/<sha>/status`; debug server errors by reproducing locally (`dev-live` launch config).
@@ -443,3 +443,19 @@ Design only, no code changed, 0 units.
 - UX choices: three steps (Hand · Design · Result) with a 3-segment progress bar; one primary action per screen, bottom-anchored; rarely used controls (swap, flip, apply to all, shape/length) moved into sheets so the editor shows only photo, five nails, length and the button.
 
 **Next step:** user reviews the wireframes; then the Nov 1 submission material.
+
+### Session 15, Nov 1, 2026: render realism audit and fixes
+The user said renders still don't look realistic and asked to verify the sequence. 0 units.
+- **Sequence audit:** hand photo → spec → `toNailVtoPayload` → YouCam → copy → composite → realism → storage all run in order; the payload matches the Nail VTO docs field for field. The post-passes do run on every Nail VTO render.
+- **Diagnosis** on the user's 5 renders from today (`25bf3561` jelly crimson, `84b74cf6` cream sage, `2b27c5b4` matte navy, `ef584a57` matte sage, `52dbb900` metallic navy; hand, YouCam original and our final compared at pixel level):
+  - YouCam paints the same two hard white "studio light" stripes on every glossy nail, whatever the room's light; metallic gets mirror streaks.
+  - Ours: grain was measured with the median around the nail, which on a knitted blanket background counts the knit as noise → matte polish looked like sandpaper. The composite made the jelly an opaque bright red (lost the see-through look) and took the navy chrome's darker rim to black (additive shading offset from a bright blue) → a dark ring round each nail.
+  - Hand photos on iPhone are video frames, 843–1016 px wide (nails ≈ 80–100 px): YouCam's crisp paint on a soft photo. Not changed (camera flow; after submission).
+- **Fixes:**
+  - `realism.ts`: `softenGloss` (plain-colour specs only, `softenGloss` option set by `service.ts`): per nail, lightness above a stripe-clipped local average (two passes, so stripes don't lift it) is replaced by its wide blur (σ = 0.35 × √nail size) and those pixels take the body's chroma; fades out over the nail's outer ~2 px so skin at the rim keeps its colour; works on the nails' bounding box. Grain from the lower quartile of the ring's high-pass (`noiseFloor`), `GRAIN` 0.9 → 0.6, chroma grain 0.4 → 0.15.
+  - `composite.ts`: jelly/sheer fingers keep YouCam's paint (`hex: null`; all see-through → no composite); shading darker than the nail's median is scaled in proportion to the target's lightness instead of an offset.
+  - 4 new tests (176 pass), typecheck and lint clean.
+- **Checked offline** by re-running `finishRender` on the 5 stored originals (scratch runner, nothing written to storage): stripes become a soft sheen, matte is smooth, navy has no ring, jelly stays its own colour. Post-pass time locally 3–5 s per render (was 2–2.5 s); Vercel not measured.
+- Stored renders keep their old finals; a repeat of the same look hits the cache and shows the old image until re-processed.
+
+**Next step:** push (with the user's OK) and look at a fresh render on the phone; optionally re-process today's 5 stored renders with the new passes (free).

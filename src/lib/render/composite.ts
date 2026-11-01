@@ -7,7 +7,7 @@
 // Pure functions on raw RGB buffers; decoding and encoding live in composite-image.ts.
 
 import { type Lab, deltaE, hexToRgb, rgbToOklab } from "@/lib/inspo/oklab";
-import { type DesignSpec, FINGERS } from "@/lib/spec/types";
+import { type DesignSpec, FINGERS, type Texture } from "@/lib/spec/types";
 import {
   type Raster, clampByte, components, gaussianBlur, growLabels, labDist, linearToSrgb, oklabToLinear, rankFilter, toLab,
 } from "./raster";
@@ -15,8 +15,8 @@ import {
 export type { Raster };
 
 export interface NailTarget {
-  /** Requested polish colour, #RRGGBB. */
-  hex: string;
+  /** Requested polish colour, #RRGGBB; null keeps YouCam's paint (see-through finishes). */
+  hex: string | null;
   /** The finger's tip in normalised image coordinates (MediaPipe landmark), when known. */
   tip?: { x: number; y: number };
 }
@@ -53,17 +53,25 @@ const GRAIN = 0.8;
 const TIP_LANDMARKS = [4, 8, 12, 16, 20];
 
 /**
+ * Finishes whose colour YouCam mixes with the bare nail underneath. Recolouring them with the solid requested colour
+ * made a crimson jelly an opaque, bright red; YouCam's own see-through paint is the truer picture.
+ */
+const SEE_THROUGH: ReadonlySet<Texture> = new Set(["jelly", "sheer"]);
+
+/**
  * Targets for a spec, or null when the composite doesn't apply: design fingers (their art comes from
- * the PNG, and the mask splits two-tone nails).
+ * the PNG, and the mask splits two-tone nails), or only see-through finishes.
  * `landmarks` is the hand photo's stored MediaPipe result: 21 normalised points.
  */
 export function compositeTargets(spec: DesignSpec, landmarks: unknown): NailTarget[] | null {
   if (FINGERS.some((f) => spec.fingers[f].kind !== "color")) return null;
+  if (FINGERS.every((f) => SEE_THROUGH.has(spec.fingers[f].texture))) return null;
   const points = Array.isArray(landmarks) && landmarks.length === 21 ? (landmarks as { x?: unknown; y?: unknown }[]) : null;
   return FINGERS.map((finger, k) => {
     const p = points?.[TIP_LANDMARKS[k]];
     const tip = p && typeof p.x === "number" && typeof p.y === "number" ? { x: p.x, y: p.y } : undefined;
-    return { hex: spec.fingers[finger].baseHex, tip };
+    const f = spec.fingers[finger];
+    return { hex: SEE_THROUGH.has(f.texture) ? null : f.baseHex, tip };
   });
 }
 
@@ -83,15 +91,16 @@ export function trueColourComposite(hand: Raster, render: Raster, opts: Composit
   const { labels, count } = components(hard, w, h);
   const nails = nailStats(labels, count, renderLab, w);
   const minSize = Math.max(1, n * MIN_NAIL_FRACTION);
-  const targets = opts.targets.map((t) => ({ lab: hexToLab(t.hex), tip: t.tip && { x: t.tip.x * w, y: t.tip.y * h } }));
+  const targets = opts.targets.map((t) => ({ lab: t.hex ? hexToLab(t.hex) : null, tip: t.tip && { x: t.tip.x * w, y: t.tip.y * h } }));
   const withTips = targets.filter((t) => t.tip);
+  const solid = targets.filter((t): t is { lab: Lab; tip: typeof t.tip } => t.lab !== null);
   const targetOf: (Lab | null)[] = nails.map((nail) => {
-    if (nail.size < minSize || targets.length === 0) return null;
+    if (nail.size < minSize || solid.length === 0) return null;
     if (withTips.length) {
       const dist = (t: (typeof targets)[number]) => Math.hypot(t.tip!.x - nail.cx, t.tip!.y - nail.cy);
       return withTips.reduce((best, t) => (dist(t) < dist(best) ? t : best)).lab;
     }
-    return targets.reduce((best, t) => (deltaE(t.lab, nail.mean) < deltaE(best.lab, nail.mean) ? t : best)).lab;
+    return solid.reduce((best, t) => (deltaE(t.lab, nail.mean) < deltaE(best.lab, nail.mean) ? t : best)).lab;
   });
 
   // Soft edge: blur the recoloured nails' mask; the fringe takes the nearest nail's label.
@@ -115,8 +124,10 @@ export function trueColourComposite(hand: Raster, render: Raster, opts: Composit
     const label = fringeLabels[i];
     const target = label ? targetOf[label - 1] : null;
     if (m <= 0.002 || !target) continue;
-    // YouCam's lightness pattern centred on the target; highlights lose chroma, as real speculars do.
-    const L = target.L + (renderLab[i * 3] - nails[label - 1].medianL) * SHADING;
+    // YouCam's lightness pattern centred on the target; highlights lose chroma, as real speculars do. Shading is
+    // scaled in proportion: an offset made for a bright blue took a navy's rim to black (a dark ring round the nail).
+    const rL = renderLab[i * 3], medianL = nails[label - 1].medianL;
+    const L = rL >= medianL ? target.L + (rL - medianL) * SHADING : target.L * (1 - SHADING * (1 - rL / medianL));
     const hi = Math.min(1, Math.max(0, (L - target.L) / 0.25));
     const lin = oklabToLinear(L, target.a * (1 - 0.7 * hi), target.b * (1 - 0.7 * hi));
     for (let c = 0; c < 3; c++) {

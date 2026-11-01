@@ -1,6 +1,6 @@
 import "server-only";
 import { serverEnv } from "@/lib/env";
-import { type DesignSpec } from "@/lib/spec/types";
+import { type DesignSpec, FINGERS } from "@/lib/spec/types";
 import { renderCacheKey, toNailVtoPayload, toTransferPayload, transferCacheKey } from "@/lib/spec/payload";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getObject, putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
@@ -247,6 +247,7 @@ async function finish(row: RenderRow, raw: Uint8Array): Promise<Uint8Array | nul
       targets: compositeTargets(spec, row.hand.landmarks),
       fingers: fingerAxes(row.hand.landmarks),
       shadow: CUTICLE_SHADOW[spec.effectType],
+      softenGloss: FINGERS.every((f) => spec.fingers[f].kind === "color"),
     });
     if (!outcome.ok) {
       console.info(`render ${row.id}: post-passes skipped (${outcome.reason})`);

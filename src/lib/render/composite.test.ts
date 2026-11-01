@@ -125,6 +125,31 @@ describe("compositeTargets", () => {
     });
     expect(compositeTargets(withDesign, landmarks)).toBeNull();
   });
+
+  it("keeps YouCam's see-through paint for jelly and sheer fingers", () => {
+    expect(compositeTargets(solidSpec("#B0123A", "jelly"), landmarks)).toBeNull();
+    const spec = solidSpec("#B0123A");
+    const mixed = { ...spec, fingers: { ...spec.fingers, ring: { ...spec.fingers.ring, texture: "sheer" as const } } };
+    const targets = compositeTargets(mixed, landmarks)!;
+    expect(targets.map((t) => t.hex)).toEqual(["#B0123A", "#B0123A", "#B0123A", null, "#B0123A"]);
+  });
+});
+
+describe("trueColourComposite shading", () => {
+  it("scales dark shading in proportion, so a navy's rim doesn't go black", () => {
+    // A bright blue nail with a darker rim band, recoloured to navy.
+    const BLUE: RGB = [70, 110, 230];
+    const RIM: RGB = [20, 30, 110];
+    const r = raster((x, y) => {
+      if (!inEllipse(x, y, 40, 40, 10, 14)) return handPx(x, y);
+      return y > 50 ? RIM : BLUE;
+    });
+    const { image } = trueColourComposite(hand, r, { targets: [{ hex: "#1F2A55" }], grain: 0 });
+    const navyL = labOf(hexToRgb("#1F2A55")).L;
+    const rimL = labOf(px(image, 40, 52)).L;
+    expect(rimL).toBeLessThan(navyL - 0.05); // still shaded
+    expect(rimL).toBeGreaterThan(0.1); // not crushed to black
+  });
 });
 
 describe("finishRender", () => {

@@ -1,7 +1,10 @@
 // Realism pass over a finished Nail VTO render, design nails included. YouCam lays a press-on on like a sticker:
 // a hard edge, no contact shadow where it meets the finger, and crisp, noise-free paint on a dim, grainy photo.
 // Without touching the nail's colours, we
-//  - add grain with the photo's own noise level, measured around each nail;
+//  - on plain-colour nails, spread YouCam's hard studio-light gloss stripes into a soft sheen: it paints the same
+//    pair of crisp white stripes on every nail, whatever the room's light;
+//  - add grain with the photo's own noise level, measured around each nail (its smoothest parts: a textured
+//    background like a knitted blanket is not sensor noise);
 //  - keep the nail's highlights within reach of the brightest thing nearby in the photo (a soft knee): YouCam's
 //    gloss and glare streaks are studio-white even on a dim photo. Shadows stay: a dark polish on light skin is
 //    meant to be the darkest thing around;
@@ -31,6 +34,8 @@ export interface RealismOptions {
   fingers?: FingerAxis[];
   /** Darkening of the skin right at the cuticle edge (0–1). A press-on sits on top of the nail; polish barely lifts. */
   shadow?: number;
+  /** Spread the gloss stripes into a soft sheen. Only for plain colours: on art, the white details are the design. */
+  softenGloss?: boolean;
   /** Seed for the grain, so the same render always comes out the same. */
   seed?: number;
 }
@@ -61,7 +66,12 @@ const RING_FAR = 24;
 const HIGHLIGHT_HEADROOM = 0.1;
 const GLOSS_MIN = 0.25;
 /** How much of the photo's grain the nail gets. */
-const GRAIN = 0.9;
+const GRAIN = 0.6;
+/** Gloss softening: blur radius as a share of a typical nail's size, and how much of the stripes is spread out. */
+const GLOSS_SPREAD = 0.35;
+const GLOSS_SOFTEN = 1;
+/** The softening fades in over about this many pixels inside the nail's edge. */
+const GLOSS_EDGE = 2;
 /** Width of the highlight knee, in OKLab L. */
 const KNEE = 0.08;
 /** Edge softening, in pixels. */
@@ -108,7 +118,9 @@ export function realismPass(hand: Raster, image: Raster, opts: RealismOptions = 
 
   // 2. The photo around each nail: nearest nail and distance for every pixel near one.
   const near = nearestNail(labels, w, h, RING_FAR);
+  // youcamLab is done with once the mask is drawn, so the gloss softening may change it in place.
   const imageLab = youcam === image ? youcamLab : toLab(image.data, n);
+  const glossed = opts.softenGloss ? softenGloss(imageLab, labels, nails, w, h) : null;
   const handHigh = [0, 1, 2].map((c) => highPass(hand.data, c, w, h));
   const stats = nails.map(() => ({ ringL: [] as number[], noise: [[], [], []] as number[][] }));
   for (let i = 0; i < n; i++) {
@@ -128,7 +140,7 @@ export function realismPass(hand: Raster, image: Raster, opts: RealismOptions = 
     if (!g.real) return null;
     const s = stats[k];
     // YouCam's paint has no sensor noise of its own (art detail isn't grain), so the nail gets the photo's.
-    const noise = [0, 1, 2].map((c) => GRAIN * robustSigma(s.noise[c].length >= 50 ? s.noise[c] : allNoise[c]));
+    const noise = [0, 1, 2].map((c) => GRAIN * noiseFloor(s.noise[c].length >= 50 ? s.noise[c] : allNoise[c]));
     s.ringL.sort((a, b) => a - b);
     const nailL = g.pixels.map((i) => imageLab[i * 3]).sort((a, b) => a - b);
     const ceiling = s.ringL.length >= 50
@@ -153,8 +165,8 @@ export function realismPass(hand: Raster, image: Raster, opts: RealismOptions = 
     const L0 = imageLab[i * 3], a = imageLab[i * 3 + 1], b = imageLab[i * 3 + 2];
     const L = plan.ceiling === null ? L0 : L0 + (softCeiling(L0, plan.ceiling) - L0) * sure;
     let rgb: number[];
-    if (Math.abs(L - L0) > 1e-4) {
-      toned.add(label);
+    if (Math.abs(L - L0) > 1e-4 || glossed?.[i]) {
+      if (Math.abs(L - L0) > 1e-4) toned.add(label);
       // Keep the chroma in proportion, so a toned-down highlight doesn't turn garish.
       const k = L / L0;
       rgb = oklabToLinear(L, a * k, b * k).map((v) => linearToSrgb(v) * 255);
@@ -162,7 +174,7 @@ export function realismPass(hand: Raster, image: Raster, opts: RealismOptions = 
       rgb = [image.data[i * 3], image.data[i * 3 + 1], image.data[i * 3 + 2]];
     }
     for (let c = 0; c < 3; c++) {
-      out[i * 3 + c] = clampByte(rgb[c] + sure * plan.noise[c] * (0.92 * grain.lum[i] + 0.4 * grain.chroma[c][i]));
+      out[i * 3 + c] = clampByte(rgb[c] + sure * plan.noise[c] * (0.97 * grain.lum[i] + 0.15 * grain.chroma[c][i]));
     }
   }
 
@@ -341,6 +353,81 @@ function robustSigma(absValues: number[]): number {
   if (absValues.length === 0) return 0;
   const sorted = Float32Array.from(absValues).sort();
   return 1.4826 * sorted[sorted.length >> 1];
+}
+
+/**
+ * Standard deviation from the lower quartile of absolute values: the noise of the smoothest parts (skin), not of a
+ * textured background, which the median picked up as grain and turned matte polish into sandpaper.
+ */
+function noiseFloor(absValues: number[]): number {
+  if (absValues.length === 0) return 0;
+  const sorted = Float32Array.from(absValues).sort();
+  return sorted[sorted.length >> 2] / 0.3186; // a Gaussian's |x| has its lower quartile at 0.3186 σ
+}
+
+// --- gloss ---
+
+/**
+ * Spreads the bright detail of each nail (YouCam's hard gloss stripes) into a soft sheen, in place on `lab`: the
+ * nail's lightness above its local average is replaced by a blur of it, and those pixels take the average chroma of
+ * the nail's body, so the stripe doesn't turn grey once dimmed. Shading (darker than average) stays as painted.
+ * The averages only cover nail pixels, and the change fades out over the nail's outer couple of pixels: the mask
+ * takes in a little skin at the rim, which must keep its colour. The average is taken twice, the second time with
+ * the highlights clipped to the first: stripes lift a plain average, and dimmed to it they stayed pale bands.
+ * Works on the nails' bounding box only (the blurs are wide). Returns the pixels it changed.
+ */
+function softenGloss(lab: Float32Array, labels: Int32Array, nails: (NailGeometry & { real: boolean })[], w: number, h: number): Uint8Array {
+  const changed = new Uint8Array(w * h);
+  const sizes = nails.filter((g) => g.real).map((g) => g.size).sort((a, b) => a - b);
+  if (sizes.length === 0) return changed;
+  const sigma = Math.max(2, GLOSS_SPREAD * Math.sqrt(sizes[sizes.length >> 1]));
+
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let i = 0; i < w * h; i++) {
+    if (!labels[i]) continue;
+    const x = i % w, y = Math.floor(i / w);
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  const margin = Math.ceil(3 * sigma);
+  x0 = Math.max(0, x0 - margin); y0 = Math.max(0, y0 - margin);
+  x1 = Math.min(w - 1, x1 + margin); y1 = Math.min(h - 1, y1 + margin);
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1, m = bw * bh;
+  const at = (j: number) => (y0 + Math.floor(j / bw)) * w + x0 + (j % bw);
+
+  const inside = new Float32Array(m);
+  for (let j = 0; j < m; j++) inside[j] = labels[at(j)] ? 1 : 0;
+  const soft = gaussianBlur(inside, bw, bh, GLOSS_EDGE);
+  const nail = new Float32Array(m);
+  for (let j = 0; j < m; j++) if (inside[j]) nail[j] = smoothstep(0.5, 0.95, soft[j]);
+  const blur = (weight: Float32Array, total: Float32Array, value: (j: number) => number) => {
+    const weighted = new Float32Array(m);
+    for (let j = 0; j < m; j++) if (weight[j]) weighted[j] = weight[j] * value(j);
+    const blurred = gaussianBlur(weighted, bw, bh, sigma);
+    for (let j = 0; j < m; j++) blurred[j] = total[j] > 1e-6 ? blurred[j] / total[j] : 0;
+    return blurred;
+  };
+  const L = (j: number) => lab[at(j) * 3];
+  const nailTotal = gaussianBlur(nail, bw, bh, sigma);
+  const rough = blur(nail, nailTotal, L);
+  const baseL = blur(nail, nailTotal, (j) => Math.min(L(j), rough[j]));
+  const peak = new Float32Array(m);
+  for (let j = 0; j < m; j++) if (inside[j]) peak[j] = Math.max(0, L(j) - baseL[j]);
+  // Chroma of the body of the nail, not of its white highlights.
+  const body = new Float32Array(m);
+  for (let j = 0; j < m; j++) body[j] = nail[j] * (1 - smoothstep(0, 0.05, peak[j]));
+  const bodyTotal = gaussianBlur(body, bw, bh, sigma);
+  const [baseA, baseB] = [1, 2].map((c) => blur(body, bodyTotal, (j) => lab[at(j) * 3 + c]));
+  const sheen = blur(nail, nailTotal, (j) => peak[j]);
+  for (let j = 0; j < m; j++) {
+    if (!nail[j] || (peak[j] === 0 && sheen[j] === 0)) continue;
+    const i = at(j), s = GLOSS_SOFTEN * nail[j];
+    lab[i * 3] -= s * (peak[j] - sheen[j]);
+    const t = s * smoothstep(0, 0.12, peak[j]);
+    lab[i * 3 + 1] += (baseA[j] - lab[i * 3 + 1]) * t;
+    lab[i * 3 + 2] += (baseB[j] - lab[i * 3 + 2]) * t;
+    changed[i] = 1;
+  }
+  return changed;
 }
 
 const quantile = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))];
