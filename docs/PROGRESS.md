@@ -436,3 +436,10 @@ Nothing happened Oct 27–30, so the plan was rescoped with the user: Day 9 (fid
 **Verified** with `dev-mock` + `npm run build`: mock render → recipe created → WhatsApp text ("All nails: Maison Corail + chrome powder · 200 MAD, about 45 min · link"), recipe page at phone width, og:image meta and a 200 PNG preview (Satori needs single-text-child divs; fixed). Test rows, storage object and the fake ledger unit deleted (ledger 13, recipes 0). A first recipe was made by a stale dev module (no chrome powder); recreated after a restart, so not a code issue.
 
 **Next step:** push (with the user's OK), phone test: render → Send on WhatsApp → check the preview card in the chat. Then Nov 1 submission material.
+
+### Session 14, Nov 1, 2026: app wireframes in Doop
+Design only, no code changed, 0 units.
+- Low-fidelity grayscale wireframes of the whole app on the Doop canvas https://doop.design/c/NC_ia06b-- (prototype: `/proto`, starts at 01 Welcome). 13 phone screens: welcome → hand camera (live guidance, auto-capture, upload) → hand ready → choose (copy a nail photo / one colour) → one colour (swatches, custom, 5 finishes) → add photo → check nails (auto-found markers, per-finger strip, length row) → fix nails (tap in order, undo, "not in photo") → edit a nail sheet (copy art / colour only, colour, 9 finishes, flip, swap, use on all) → length sheet (my nails / extensions, 5 shapes, 4 lengths) → painting → result (before/after slider, polish match, estimate, WhatsApp, Nail Transfer compare) → recipe card. Plus one board of 8 failure states (palm, tilted hand, own hand, not nails, none found, approximate, render failed, limit).
+- UX choices: three steps (Hand · Design · Result) with a 3-segment progress bar; one primary action per screen, bottom-anchored; rarely used controls (swap, flip, apply to all, shape/length) moved into sheets so the editor shows only photo, five nails, length and the button.
+
+**Next step:** user reviews the wireframes; then the Nov 1 submission material.
