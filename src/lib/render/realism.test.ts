@@ -95,7 +95,7 @@ describe("realismPass", () => {
     const glossy = (x: number): RGB => (stripe(x) ? [255, 255, 255] : RED);
     const r = render(hand, glossy);
     const contrast = (img: Raster) => lab(px(img, NAIL.cx + 2, NAIL.cy)).L - lab(px(img, NAIL.cx - 5, NAIL.cy)).L;
-    const soft = realismPass(hand, r, { softenGloss: true }).image;
+    const soft = realismPass(hand, r, { gloss: [1] }).image;
     const kept = realismPass(hand, r).image;
     expect(contrast(kept)).toBeGreaterThan(0.2);
     expect(contrast(soft)).toBeLessThan(0.08);

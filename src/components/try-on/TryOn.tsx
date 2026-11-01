@@ -110,6 +110,12 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
       fingers: Object.fromEntries(FINGERS.map((f) => [f, { kind: "color", baseHex: hex, texture }])) as DesignSpecInput["fingers"],
     });
 
+  /**
+   * Drops the last result once the design it showed is gone (a new inspiration photo), so its quote and WhatsApp
+   * recipe can't be sent for the wrong nails. A render still running is kept: its unit is spent, and polling collects it.
+   */
+  const clearResult = () => setRender((r) => (r.status === "running" ? r : { status: "idle" }));
+
   const renderSpec = async (spec: DesignSpecInput, engine: EngineChoice = "auto") => {
     if (upload.status !== "ready") return;
     setLastSpec(spec);
@@ -164,7 +170,7 @@ export default function TryOn({ photo }: { photo: GatedPhoto }) {
       </div>
 
       {mode === "inspiration" ? (
-        <InspoPicker onTryOn={renderSpec} busy={busy} />
+        <InspoPicker onTryOn={renderSpec} onNewPhoto={clearResult} busy={busy} />
       ) : (
         <>
         <div className="flex flex-col gap-2">

@@ -174,7 +174,16 @@ function pickAll(image: InspirationImage, taps: (Point | null)[]): (NailPick | n
   );
 }
 
-export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignSpec, engine: EngineChoice) => void; busy: boolean }) {
+export default function InspoPicker({
+  onTryOn,
+  onNewPhoto,
+  busy,
+}: {
+  onTryOn: (spec: DesignSpec, engine: EngineChoice) => void;
+  /** A different inspiration photo was chosen: the last render's design (and its quote and recipe) no longer applies. */
+  onNewPhoto?: () => void;
+  busy: boolean;
+}) {
   const [loaded, setLoaded] = useState<LoadedInspiration | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -428,6 +437,7 @@ export default function InspoPicker({ onTryOn, busy }: { onTryOn: (spec: DesignS
       const next = await loadInspiration(file);
       fileRef.current = file;
       setLoaded(next);
+      onNewPhoto?.();
       setInspoId(null);
       setSam("loading");
       setSamError(null);

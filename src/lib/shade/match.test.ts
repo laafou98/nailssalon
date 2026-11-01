@@ -112,7 +112,12 @@ describe("quoteSpec", () => {
       length: 1.35,
       fingers: {
         ...base.fingers,
-        ring: { kind: "color", baseHex: "#F7F7F5", texture: "cream", pattern: "french" },
+        ring: {
+          kind: "design", baseHex: "#F7F7F5", texture: "cream", pattern: "french",
+          designImageId: "00000000-0000-4000-8000-000000000001",
+        },
+        // Colour only, though the photo showed art: plain polish, no art charge.
+        pinky: { kind: "color", baseHex: "#C9CBCF", texture: "metallic", pattern: "art" },
         index: {
           kind: "design", baseHex: "#F7F7F5", texture: "cream",
           designImageId: "00000000-0000-4000-8000-000000000000",

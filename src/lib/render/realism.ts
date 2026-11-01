@@ -1,8 +1,8 @@
 // Realism pass over a finished Nail VTO render, design nails included. YouCam lays a press-on on like a sticker:
 // a hard edge, no contact shadow where it meets the finger, and crisp, noise-free paint on a dim, grainy photo.
 // Without touching the nail's colours, we
-//  - on plain-colour nails, spread YouCam's hard studio-light gloss stripes into a soft sheen: it paints the same
-//    pair of crisp white stripes on every nail, whatever the room's light;
+//  - spread YouCam's hard studio-light gloss stripes into a soft sheen, as strongly as each finger's finish allows
+//    (full on cream or jelly, lightly on chrome, not on shimmer or art, where the bright specks are the look);
 //  - add grain with the photo's own noise level, measured around each nail (its smoothest parts: a textured
 //    background like a knitted blanket is not sensor noise);
 //  - keep the nail's highlights within reach of the brightest thing nearby in the photo (a soft knee): YouCam's
@@ -14,7 +14,7 @@
 // The nails are the pixels YouCam changed: away from the nails its render is the hand photo, pixel for pixel.
 // Pure functions on raw RGB buffers; decoding and encoding live in composite-image.ts.
 
-import { type Raster, clampByte, components, gaussianBlur, labDist, linearToSrgb, oklabToLinear, rankFilter, toLab } from "./raster";
+import { PAINT_STRONG, type Raster, clampByte, components, gaussianBlur, linearToSrgb, oklabToLinear, paintMask, toLab, wideBlur } from "./raster";
 
 export interface Point {
   x: number;
@@ -34,8 +34,11 @@ export interface RealismOptions {
   fingers?: FingerAxis[];
   /** Darkening of the skin right at the cuticle edge (0–1). A press-on sits on top of the nail; polish barely lifts. */
   shadow?: number;
-  /** Spread the gloss stripes into a soft sheen. Only for plain colours: on art, the white details are the design. */
-  softenGloss?: boolean;
+  /**
+   * How much to spread each finger's gloss stripes into a soft sheen (0–1), thumb to pinky; see `glossStrength`.
+   * A nail takes its nearest fingertip's value; without `fingers`, the value they all share, else none.
+   */
+  gloss?: number[];
   /** Seed for the grain, so the same render always comes out the same. */
   seed?: number;
 }
@@ -48,13 +51,6 @@ export interface RealismResult {
   shadowed: number;
 }
 
-/** OKLab change between photo and render that surely is paint; the mask then grows into weaker change nearby. */
-const PAINT_STRONG = 0.08;
-const PAINT_WEAK = 0.015;
-const PAINT_WEAK_MAX = 0.06;
-const GROW_STEPS = 4;
-/** Closing size: fills bays where a dark press-on tip happens to match a dark background. */
-const CLOSE_SIZE = 9;
 /** Smaller painted blobs are noise, not nails (fraction of the image). */
 const MIN_NAIL_FRACTION = 0.0002;
 /** More change than this (fraction of the image) means the render isn't the photo plus nails: leave it alone. */
@@ -120,7 +116,8 @@ export function realismPass(hand: Raster, image: Raster, opts: RealismOptions = 
   const near = nearestNail(labels, w, h, RING_FAR);
   // youcamLab is done with once the mask is drawn, so the gloss softening may change it in place.
   const imageLab = youcam === image ? youcamLab : toLab(image.data, n);
-  const glossed = opts.softenGloss ? softenGloss(imageLab, labels, nails, w, h) : null;
+  const glossOf = opts.gloss ? nailGloss(nails, opts.gloss, opts.fingers, w, h) : null;
+  const glossed = glossOf?.some((v) => v > 0) ? softenGloss(imageLab, labels, nails, glossOf, w, h) : null;
   const handHigh = [0, 1, 2].map((c) => highPass(hand.data, c, w, h));
   const stats = nails.map(() => ({ ringL: [] as number[], noise: [[], [], []] as number[][] }));
   for (let i = 0; i < n; i++) {
@@ -210,48 +207,6 @@ export function realismPass(hand: Raster, image: Raster, opts: RealismOptions = 
   }
 
   return { image: { width: w, height: h, data: out }, nails: realCount, toned: toned.size, shadowed: shadowed.size };
-}
-
-// --- mask ---
-
-/**
- * Strong change, opened (drops 1 px slivers from a resized render), grown into weaker change nearby, closed and
- * with holes filled.
- */
-function paintMask(handLab: Float32Array, youcamLab: Float32Array, w: number, h: number): { mask: Float32Array; delta: Float32Array; weak: number } {
-  const n = w * h;
-  const delta = new Float32Array(n);
-  let mask: Float32Array = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    delta[i] = labDist(handLab, youcamLab, i);
-    mask[i] = delta[i] > PAINT_STRONG ? 1 : 0;
-  }
-  // YouCam usually returns the photo's own pixels around the nails; when it resampled the photo, every edge in it
-  // differs a little, and growing into weak change would leak onto the skin. Raise the bar to that floor.
-  const sample: number[] = [];
-  for (let i = 0; i < n; i += 13) sample.push(delta[i]);
-  sample.sort((a, b) => a - b);
-  const weak = Math.min(PAINT_WEAK_MAX, Math.max(PAINT_WEAK, 2 * quantile(sample, 0.95)));
-  mask = rankFilter(rankFilter(mask, w, h, 5, Math.min, 1), w, h, 5, Math.max, 0);
-  for (let step = 0; step < GROW_STEPS; step++) {
-    const next = new Float32Array(mask);
-    for (let i = 0; i < n; i++) {
-      if (mask[i] || delta[i] <= weak) continue;
-      const x = i % w;
-      if ((i >= w && mask[i - w]) || (i < n - w && mask[i + w]) || (x > 0 && mask[i - 1]) || (x < w - 1 && mask[i + 1])) next[i] = 1;
-    }
-    mask = next;
-  }
-  mask = rankFilter(rankFilter(mask, w, h, CLOSE_SIZE, Math.max, 0), w, h, CLOSE_SIZE, Math.min, 1);
-  // Fill holes: unpainted islands inside a nail (art that happens to match the photo) are still nail.
-  const inverse = new Float32Array(n);
-  for (let i = 0; i < n; i++) inverse[i] = 1 - mask[i];
-  const { labels, count } = components(inverse, w, h);
-  const border = new Uint8Array(count + 1);
-  for (let x = 0; x < w; x++) border[labels[x]] = border[labels[n - w + x]] = 1;
-  for (let y = 0; y < h; y++) border[labels[y * w]] = border[labels[y * w + w - 1]] = 1;
-  for (let i = 0; i < n; i++) if (labels[i] && !border[labels[i]]) mask[i] = 1;
-  return { mask, delta, weak };
 }
 
 interface NailGeometry {
@@ -367,6 +322,30 @@ function noiseFloor(absValues: number[]): number {
 
 // --- gloss ---
 
+/** Finishes and how much of their bright detail is unwanted studio gloss rather than the look itself. */
+const GLOSS_BY_TEXTURE: Record<string, number> = {
+  matte: 1, cream: 1, jelly: 1, sheer: 1, metallic: 0.35, pearl: 0.5, shimmer_fine: 0, shimmer_coarse: 0, textured: 0,
+};
+
+/** Gloss softening per finger for a spec's fingers (thumb to pinky): by finish, none on design (art) nails. */
+export function glossStrength(fingers: { kind: string; texture: string }[]): number[] {
+  return fingers.map((f) => (f.kind === "color" ? (GLOSS_BY_TEXTURE[f.texture] ?? 0) : 0));
+}
+
+/** Each nail's softening strength, from its nearest fingertip (see RealismOptions.gloss). */
+function nailGloss(nails: (NailGeometry & { real: boolean })[], gloss: number[], fingers: FingerAxis[] | undefined, w: number, h: number): number[] {
+  const shared = gloss.every((v) => v === gloss[0]) ? gloss[0] : 0;
+  return nails.map((g) => {
+    if (!g.real) return 0;
+    if (!fingers || fingers.length !== gloss.length) return shared;
+    let best = 0;
+    fingers.forEach((f, k) => {
+      if (Math.hypot(f.tip.x * w - g.cx, f.tip.y * h - g.cy) < Math.hypot(fingers[best].tip.x * w - g.cx, fingers[best].tip.y * h - g.cy)) best = k;
+    });
+    return gloss[best];
+  });
+}
+
 /**
  * Spreads the bright detail of each nail (YouCam's hard gloss stripes) into a soft sheen, in place on `lab`: the
  * nail's lightness above its local average is replaced by a blur of it, and those pixels take the average chroma of
@@ -376,7 +355,9 @@ function noiseFloor(absValues: number[]): number {
  * the highlights clipped to the first: stripes lift a plain average, and dimmed to it they stayed pale bands.
  * Works on the nails' bounding box only (the blurs are wide). Returns the pixels it changed.
  */
-function softenGloss(lab: Float32Array, labels: Int32Array, nails: (NailGeometry & { real: boolean })[], w: number, h: number): Uint8Array {
+function softenGloss(
+  lab: Float32Array, labels: Int32Array, nails: (NailGeometry & { real: boolean })[], strength: number[], w: number, h: number,
+): Uint8Array {
   const changed = new Uint8Array(w * h);
   const sizes = nails.filter((g) => g.real).map((g) => g.size).sort((a, b) => a - b);
   if (sizes.length === 0) return changed;
@@ -402,12 +383,12 @@ function softenGloss(lab: Float32Array, labels: Int32Array, nails: (NailGeometry
   const blur = (weight: Float32Array, total: Float32Array, value: (j: number) => number) => {
     const weighted = new Float32Array(m);
     for (let j = 0; j < m; j++) if (weight[j]) weighted[j] = weight[j] * value(j);
-    const blurred = gaussianBlur(weighted, bw, bh, sigma);
+    const blurred = wideBlur(weighted, bw, bh, sigma);
     for (let j = 0; j < m; j++) blurred[j] = total[j] > 1e-6 ? blurred[j] / total[j] : 0;
     return blurred;
   };
   const L = (j: number) => lab[at(j) * 3];
-  const nailTotal = gaussianBlur(nail, bw, bh, sigma);
+  const nailTotal = wideBlur(nail, bw, bh, sigma);
   const rough = blur(nail, nailTotal, L);
   const baseL = blur(nail, nailTotal, (j) => Math.min(L(j), rough[j]));
   const peak = new Float32Array(m);
@@ -415,12 +396,12 @@ function softenGloss(lab: Float32Array, labels: Int32Array, nails: (NailGeometry
   // Chroma of the body of the nail, not of its white highlights.
   const body = new Float32Array(m);
   for (let j = 0; j < m; j++) body[j] = nail[j] * (1 - smoothstep(0, 0.05, peak[j]));
-  const bodyTotal = gaussianBlur(body, bw, bh, sigma);
+  const bodyTotal = wideBlur(body, bw, bh, sigma);
   const [baseA, baseB] = [1, 2].map((c) => blur(body, bodyTotal, (j) => lab[at(j) * 3 + c]));
   const sheen = blur(nail, nailTotal, (j) => peak[j]);
   for (let j = 0; j < m; j++) {
     if (!nail[j] || (peak[j] === 0 && sheen[j] === 0)) continue;
-    const i = at(j), s = GLOSS_SOFTEN * nail[j];
+    const i = at(j), s = GLOSS_SOFTEN * strength[labels[i] - 1] * nail[j];
     lab[i * 3] -= s * (peak[j] - sheen[j]);
     const t = s * smoothstep(0, 0.12, peak[j]);
     lab[i * 3 + 1] += (baseA[j] - lab[i * 3 + 1]) * t;

@@ -110,10 +110,14 @@ const TIER_LABEL: Record<string, string> = {
   french: "French tip", ombre: "Ombré", cat_eye: "Cat eye", art: "Nail art", chrome: "Chrome powder",
 };
 
-/** The art tier a finger is charged at: its pattern, or "art" for a design with no named pattern. */
+/**
+ * The art tier a finger is charged at: a design finger's pattern, or "art" when it names none. A colour finger is
+ * plain polish whatever pattern the photo showed: "Colour" copies only the colour (a side-on nail, or the client's
+ * choice), so charging or describing the photo's art would quote a service nobody asked for.
+ */
 export function fingerTier(f: FingerSpec): string {
-  if (f.pattern !== "solid") return f.pattern;
-  return f.kind === "design" ? "art" : "solid";
+  if (f.kind !== "design") return "solid";
+  return f.pattern !== "solid" ? f.pattern : "art";
 }
 
 export function quoteSpec(spec: DesignSpec, rules: PriceRules): Quote {

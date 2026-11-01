@@ -25,7 +25,12 @@ describe("recipe wording", () => {
     const base = solidSpec("#B0123A");
     const spec = designSpecSchema.parse({
       ...base,
-      fingers: { ...base.fingers, ring: { kind: "color", baseHex: "#F7F7F5", texture: "matte", pattern: "french" } },
+      fingers: {
+        ...base.fingers,
+        ring: { kind: "design", baseHex: "#F7F7F5", texture: "matte", pattern: "french", designImageId: "00000000-0000-4000-8000-000000000001" },
+        // Colour only, though the photo showed art: no "(art)" in the message.
+        pinky: { kind: "color", baseHex: "#B0123A", texture: "cream", pattern: "art" },
+      },
     });
     const text = recipeMessage({
       salonName: "Studio Demo", currency: "MAD", spec,

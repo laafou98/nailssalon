@@ -9,7 +9,7 @@
 import { type Lab, deltaE, hexToRgb, rgbToOklab } from "@/lib/inspo/oklab";
 import { type DesignSpec, FINGERS, type Texture } from "@/lib/spec/types";
 import {
-  type Raster, clampByte, components, gaussianBlur, growLabels, labDist, linearToSrgb, oklabToLinear, rankFilter, toLab,
+  type Raster, clampByte, components, gaussianBlur, growLabels, linearToSrgb, oklabToLinear, paintMask, toLab,
 } from "./raster";
 
 export type { Raster };
@@ -38,10 +38,6 @@ export interface CompositeResult {
   recoloured: number;
 }
 
-/** OKLab distance between photo and render that counts as "painted". */
-const PAINT_DELTA = 0.08;
-/** Opening size: removes painted lines thinner than this (YouCam's 1 px resize slivers). */
-const OPEN_SIZE = 5;
 /** Smaller painted blobs are noise, not nails (fraction of the image). */
 const MIN_NAIL_FRACTION = 0.0002;
 /** How much of YouCam's lightness variation (shading, highlights) we keep. */
@@ -59,19 +55,20 @@ const TIP_LANDMARKS = [4, 8, 12, 16, 20];
 const SEE_THROUGH: ReadonlySet<Texture> = new Set(["jelly", "sheer"]);
 
 /**
- * Targets for a spec, or null when the composite doesn't apply: design fingers (their art comes from
- * the PNG, and the mask splits two-tone nails), or only see-through finishes.
+ * Targets for a spec, or null when no finger is recoloured. Design fingers keep YouCam's paint (their art comes from
+ * the PNG, and the mask splits two-tone nails), as do see-through finishes; the plain fingers next to them still get
+ * their exact colour.
  * `landmarks` is the hand photo's stored MediaPipe result: 21 normalised points.
  */
 export function compositeTargets(spec: DesignSpec, landmarks: unknown): NailTarget[] | null {
-  if (FINGERS.some((f) => spec.fingers[f].kind !== "color")) return null;
-  if (FINGERS.every((f) => SEE_THROUGH.has(spec.fingers[f].texture))) return null;
+  const recolour = (f: (typeof spec.fingers)[keyof typeof spec.fingers]) => f.kind === "color" && !SEE_THROUGH.has(f.texture);
+  if (!FINGERS.some((f) => recolour(spec.fingers[f]))) return null;
   const points = Array.isArray(landmarks) && landmarks.length === 21 ? (landmarks as { x?: unknown; y?: unknown }[]) : null;
   return FINGERS.map((finger, k) => {
     const p = points?.[TIP_LANDMARKS[k]];
     const tip = p && typeof p.x === "number" && typeof p.y === "number" ? { x: p.x, y: p.y } : undefined;
     const f = spec.fingers[finger];
-    return { hex: SEE_THROUGH.has(f.texture) ? null : f.baseHex, tip };
+    return { hex: recolour(f) ? f.baseHex : null, tip };
   });
 }
 
@@ -82,13 +79,12 @@ export function trueColourComposite(hand: Raster, render: Raster, opts: Composit
   const handLab = toLab(hand.data, n);
   const renderLab = toLab(render.data, n);
 
-  // Paint mask from colour change, opened to drop thin slivers (YouCam shifts edges by ~1 px).
-  let hard: Float32Array = new Float32Array(n);
-  for (let i = 0; i < n; i++) hard[i] = labDist(handLab, renderLab, i) > PAINT_DELTA ? 1 : 0;
-  hard = rankFilter(rankFilter(hard, w, h, OPEN_SIZE, Math.min, 1), w, h, OPEN_SIZE, Math.max, 0);
+  // Where YouCam painted (raster.ts): the same mask as the realism pass, so polish close to the bare nail's colour
+  // (pink over a pink nail) is recoloured whole instead of leaving the natural nail showing through.
+  const { mask: painted } = paintMask(handLab, renderLab, w, h);
 
   // One label per nail, each with its finger's colour.
-  const { labels, count } = components(hard, w, h);
+  const { labels, count } = components(painted, w, h);
   const nails = nailStats(labels, count, renderLab, w);
   const minSize = Math.max(1, n * MIN_NAIL_FRACTION);
   const targets = opts.targets.map((t) => ({ lab: t.hex ? hexToLab(t.hex) : null, tip: t.tip && { x: t.tip.x * w, y: t.tip.y * h } }));

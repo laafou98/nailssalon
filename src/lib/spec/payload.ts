@@ -4,18 +4,29 @@
 import { createHash } from "node:crypto";
 import { type DesignSpec, FINGERS, type FingerSpec, type Texture } from "./types";
 
-/** Look parameters per finish. Cream matches the smoke test that rendered well on Oct 20. */
+/**
+ * Look parameters per finish. High reflection with low roughness (the Oct 20 smoke-test values, 60/10 for cream)
+ * makes YouCam paint the same two hard white studio-light stripes on every nail, whatever the room's light. Real
+ * renders on the user's hands (Nov 1) chose these softer values: a broad, soft gloss instead. Metallic keeps its
+ * facet streaks at any setting (tried 60/40/50 and 40/20/80); 60/40/50 tames them a little and still reads as chrome.
+ */
 const NAIL_POLISH_PARAMS: Record<Texture, Record<string, number>> = {
   matte: { transparency: 0, reflection: 10, contrast: 50, roughness: 80 },
-  cream: { transparency: 0, reflection: 60, contrast: 50, roughness: 10 },
-  jelly: { transparency: 45, reflection: 80, contrast: 50, roughness: 5 },
-  sheer: { transparency: 70, reflection: 60, contrast: 40, roughness: 10 },
-  metallic: { reflection: 90, contrast: 70, roughness: 20 }, // YouCam: no transparency for metallic
-  pearl: { transparency: 0, reflection: 70, contrast: 50, roughness: 15, shimmer_opacity: 60 },
-  shimmer_fine: { transparency: 0, reflection: 70, contrast: 50, roughness: 15, shimmer_size: 30 },
-  shimmer_coarse: { transparency: 0, reflection: 70, contrast: 50, roughness: 15, shimmer_size: 70 },
+  cream: { transparency: 0, reflection: 30, contrast: 50, roughness: 40 },
+  jelly: { transparency: 45, reflection: 40, contrast: 50, roughness: 40 },
+  sheer: { transparency: 40, reflection: 30, contrast: 40, roughness: 40 }, // 70 left a pale pink invisible on a bare nail
+  metallic: { reflection: 60, contrast: 40, roughness: 50 }, // YouCam: no transparency for metallic
+  pearl: { transparency: 0, reflection: 45, contrast: 50, roughness: 35, shimmer_opacity: 60 },
+  shimmer_fine: { transparency: 0, reflection: 45, contrast: 50, roughness: 35, shimmer_size: 30 },
+  shimmer_coarse: { transparency: 0, reflection: 45, contrast: 50, roughness: 35, shimmer_size: 70 },
   textured: { transparency: 0, reflection: 30, contrast: 50, roughness: 60, textured_size: 50 },
 };
+
+/**
+ * Most transparency a design finger gets: YouCam fades the whole art image by it, and at a sheer 70 (or 40) a
+ * copied swirl all but disappeared (Nov 1). The see-through look stays, the art stays readable.
+ */
+const DESIGN_MAX_TRANSPARENCY = 30;
 
 /** Press-on nails only support three finishes; map the rest to the closest look. */
 const PRESS_ON_TEXTURE: Record<Texture, "matte" | "cream" | "metallic"> = {
@@ -32,8 +43,8 @@ const PRESS_ON_TEXTURE: Record<Texture, "matte" | "cream" | "metallic"> = {
 
 const PRESS_ON_PARAMS = {
   matte: { reflection: 10, contrast: 50, roughness: 80 },
-  cream: { reflection: 60, contrast: 50, roughness: 10 },
-  metallic: { reflection: 90, contrast: 70, roughness: 20 },
+  cream: { reflection: 30, contrast: 50, roughness: 40 },
+  metallic: { reflection: 60, contrast: 40, roughness: 50 },
 } as const;
 
 export interface NailVtoPayload {
@@ -64,7 +75,8 @@ export function toNailVtoPayload(
     if (f.kind === "design") {
       const url = designUrls[f.designImageId!];
       if (!url) throw new Error(`No URL for the ${finger} design image`);
-      return { sub_type: "design", finger, ref_file_url: url, ...shape, ...look };
+      const art = "transparency" in look ? { ...look, transparency: Math.min(look.transparency as number, DESIGN_MAX_TRANSPARENCY) } : look;
+      return { sub_type: "design", finger, ref_file_url: url, ...shape, ...art };
     }
     return { sub_type: "color", finger, ...shape, color: f.baseHex, ...look };
   });

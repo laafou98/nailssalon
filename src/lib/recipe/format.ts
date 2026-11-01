@@ -1,7 +1,7 @@
 // Shared wording for the salon card, the recipe page and the WhatsApp message. Pure.
 
 import { LENGTHS } from "@/lib/inspo/pick";
-import type { FingerMatch, Quote } from "@/lib/shade/match";
+import { type FingerMatch, type Quote, fingerTier } from "@/lib/shade/match";
 import { FINGERS, type DesignSpec, type Finger, type Texture } from "@/lib/spec/types";
 
 export const FINGER_LABEL: Record<Finger, string> = {
@@ -55,7 +55,8 @@ export function recipeMessage(args: {
   const { salonName, currency, spec, matches, quote, url } = args;
   const lines = groupFingers(matches).map(({ fingers, match }) => {
     const f = spec.fingers[fingers[0]];
-    const art = f.kind === "design" || f.pattern !== "solid" ? ` (${f.pattern === "solid" ? "art" : f.pattern.replace("_", " ")})` : "";
+    const tier = fingerTier(f);
+    const art = tier !== "solid" ? ` (${tier.replace("_", " ")})` : "";
     const accents = match.accents.length ? ` + ${match.accents.map((a) => a.polish.name).join(", ")}` : "";
     const top = match.base.topCoat ? ` + ${match.base.topCoat}` : "";
     return `• ${fingerList(fingers)}: ${match.base.polish.brand} ${match.base.polish.name}${top}${accents}${art}`;

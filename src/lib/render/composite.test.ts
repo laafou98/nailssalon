@@ -117,13 +117,18 @@ describe("compositeTargets", () => {
     expect(compositeTargets(solidSpec("#F0645A"), null)!.every((t) => !t.tip)).toBe(true);
   });
 
-  it("skips specs with design fingers", () => {
+  it("recolours the plain fingers of a spec with design fingers, and leaves the art to YouCam", () => {
     const spec = solidSpec("#F0645A");
     const withDesign = designSpecSchema.parse({
       ...spec,
       fingers: { ...spec.fingers, ring: { ...spec.fingers.ring, kind: "design", designImageId: "3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f" } },
     });
-    expect(compositeTargets(withDesign, landmarks)).toBeNull();
+    expect(compositeTargets(withDesign, landmarks)!.map((t) => t.hex)).toEqual(["#F0645A", "#F0645A", "#F0645A", null, "#F0645A"]);
+    const allArt = designSpecSchema.parse({
+      ...spec,
+      fingers: Object.fromEntries(Object.entries(spec.fingers).map(([k, f]) => [k, { ...f, kind: "design", designImageId: "3f1c2a9e-8b7d-4c6e-9f10-2a3b4c5d6e7f" }])),
+    });
+    expect(compositeTargets(allArt, landmarks)).toBeNull();
   });
 
   it("keeps YouCam's see-through paint for jelly and sheer fingers", () => {

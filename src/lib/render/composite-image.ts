@@ -16,8 +16,8 @@ export interface FinishOptions {
   fingers?: FingerAxis[];
   /** Cuticle shadow strength (see realism.ts). */
   shadow?: number;
-  /** Spread YouCam's gloss stripes into a soft sheen (plain-colour specs; see realism.ts). */
-  softenGloss?: boolean;
+  /** Gloss softening per finger, thumb to pinky (see realism.ts `glossStrength`). */
+  gloss?: number[];
 }
 
 export type FinishOutcome =
@@ -38,7 +38,7 @@ export async function finishRender(handBytes: Uint8Array, renderBytes: Uint8Arra
   const composite = opts.targets ? trueColourComposite(hand, youcam, { targets: opts.targets, grain: 0 }) : null;
   const recoloured = composite?.recoloured ?? 0;
   const image = recoloured ? composite!.image : youcam;
-  const real = realismPass(hand, image, { youcam, fingers: opts.fingers, shadow: opts.shadow, softenGloss: opts.softenGloss });
+  const real = realismPass(hand, image, { youcam, fingers: opts.fingers, shadow: opts.shadow, gloss: opts.gloss });
   if (recoloured === 0 && real.nails === 0) return { ok: false, reason: "no_nails_found" };
 
   const bytes = await sharp(Buffer.from(real.image.data), { raw: { width, height, channels: 3 } })

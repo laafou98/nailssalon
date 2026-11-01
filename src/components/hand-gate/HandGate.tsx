@@ -153,10 +153,13 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
   const captureFrame = async (landmarker: HandLandmarker, video: HTMLVideoElement) => {
     setPhase("checking");
     // Prefer a real photo from the camera: video frames are low-resolution and heavily
-    // compressed on phones. Falls back to the video frame where ImageCapture isn't supported (iOS).
+    // compressed on phones. Where ImageCapture isn't supported (iOS Safari), take one frame at the
+    // camera's top video resolution instead of the 1080p preview's.
     let still: HTMLCanvasElement | ImageBitmap | null = await takeFullPhoto(streamRef.current);
-    const source = still ? "camera photo" : "video frame";
+    let source = "camera photo";
     if (!still) {
+      const sharp = await raiseResolution(streamRef.current, video);
+      source = sharp ? "full-resolution video frame" : "video frame";
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -372,6 +375,35 @@ async function takeFullPhoto(stream: MediaStream | null): Promise<ImageBitmap | 
   } catch {
     return null;
   }
+}
+
+/** Largest frame we ask for: 12 MP stays within iOS Safari's canvas memory limit (16.7 MP). */
+const MAX_STILL_PIXELS = 12.5e6;
+
+/**
+ * Switches the live stream to the camera's top resolution and waits for a frame at that size. The preview runs at
+ * 1080p (fast hand tracking); on an iPhone that left the nails about 80–100 px wide. True if the frame got larger.
+ */
+async function raiseResolution(stream: MediaStream | null, video: HTMLVideoElement): Promise<boolean> {
+  const track = stream?.getVideoTracks()[0];
+  const caps = track?.getCapabilities?.();
+  const maxW = caps?.width?.max, maxH = caps?.height?.max;
+  const before = video.videoWidth * video.videoHeight;
+  if (!track || !maxW || !maxH || maxW * maxH <= before * 1.2) return false;
+  const scale = Math.min(1, Math.sqrt(MAX_STILL_PIXELS / (maxW * maxH)));
+  try {
+    await track.applyConstraints({ width: { ideal: Math.round(maxW * scale) }, height: { ideal: Math.round(maxH * scale) } });
+  } catch {
+    return false;
+  }
+  const deadline = performance.now() + 2500;
+  while (video.videoWidth * video.videoHeight <= before * 1.2) {
+    if (performance.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  // The first frames after a switch can still be settling (exposure, focus); give it a few.
+  await new Promise((r) => setTimeout(r, 300));
+  return true;
 }
 
 const ICON: Record<CheckResult["status"], string> = { pass: "✓", warn: "!", fail: "✕" };

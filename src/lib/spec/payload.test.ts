@@ -39,7 +39,7 @@ describe("designSpecSchema", () => {
 });
 
 describe("toNailVtoPayload", () => {
-  it("matches the smoke-tested solid colour request", () => {
+  it("builds a solid colour request with the soft-gloss cream look", () => {
     const payload = toNailVtoPayload(solidSpec("#B0123A"), HAND);
     expect(payload).toMatchObject({ version: "1.0", src_file_url: HAND, effect_type: "nail_polish" });
     expect(payload.effects.map((e) => e.finger)).toEqual([...FINGERS]);
@@ -49,9 +49,9 @@ describe("toNailVtoPayload", () => {
       color: "#B0123A",
       texture: "cream",
       transparency: 0,
-      reflection: 60,
+      reflection: 30,
       contrast: 50,
-      roughness: 10,
+      roughness: 40,
     });
   });
 
@@ -65,6 +65,14 @@ describe("toNailVtoPayload", () => {
     expect(pinky).toHaveProperty("shimmer_size");
     expect(ring).toMatchObject({ sub_type: "design", ref_file_url: "https://storage.example/ring.png" });
     expect(ring).not.toHaveProperty("color");
+  });
+
+  it("keeps see-through art readable: design fingers get at most 30 transparency", () => {
+    const base = designSpecSchema.parse(mixed());
+    const sheerArt = { ...base, fingers: { ...base.fingers, ring: { ...base.fingers.ring, texture: "sheer" as const } } };
+    const effects = toNailVtoPayload(sheerArt, HAND, { [DESIGN_ID]: "https://storage.example/ring.png" }).effects;
+    expect(effects[3]).toMatchObject({ sub_type: "design", texture: "sheer", transparency: 30 });
+    expect(toNailVtoPayload(solidSpec("#E8A0B0", "sheer"), HAND).effects[0].transparency).toBe(40);
   });
 
   it("refuses to build a design finger without its image URL", () => {

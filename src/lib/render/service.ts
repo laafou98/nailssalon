@@ -8,7 +8,7 @@ import { ENGINES, YouCamError, createTask, getTask } from "@/lib/youcam/client";
 import { compositeTargets } from "./composite";
 import { finishRender } from "./composite-image";
 import { sniffImageType } from "./image-type";
-import { fingerAxes } from "./realism";
+import { fingerAxes, glossStrength } from "./realism";
 import { type EngineChoice, type EngineName, chooseEngine } from "./router";
 
 /**
@@ -36,6 +36,12 @@ export class RenderError extends Error {
   }
 }
 
+/**
+ * Version of the post-passes. Bump it when composite.ts or realism.ts change the picture: finished renders made with
+ * an older version are re-processed from YouCam's stored original the next time they're shown.
+ */
+export const POST_VERSION = 3;
+
 /** Give up on a task YouCam hasn't finished after this long (observed: 7–10 s). */
 const TASK_TIMEOUT_MS = 2 * 60_000;
 
@@ -46,18 +52,20 @@ interface RenderRow {
   error: string | null;
   youcam_task_id: string | null;
   created_at: string;
+  post_version: number;
   result: { path: string } | null;
   hand: { session_id: string | null; path: string; landmarks: unknown } | null;
   design: { spec: DesignSpec } | null;
 }
 
 const RENDER_COLUMNS =
-  "id, engine, status, error, youcam_task_id, created_at, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id, path, landmarks), design:designs(spec)";
+  "id, engine, status, error, youcam_task_id, created_at, post_version, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id, path, landmarks), design:designs(spec)";
 
 async function view(row: RenderRow, cached = false): Promise<RenderView> {
   const { id, engine } = row;
   if (row.status === "success" && row.result) {
-    return { id, engine, status: "success", resultUrl: await signedUrl(row.result.path), cached };
+    const path = await upgradeResult(row, row.result.path);
+    return { id, engine, status: "success", resultUrl: await signedUrl(path), cached };
   }
   if (row.status === "error") return { id, engine, status: "error", error: row.error ?? "unknown_error" };
   return { id, engine, status: "running" };
@@ -217,19 +225,59 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   const raw = new Uint8Array(await res.arrayBuffer());
   const rawType = sniffImageType(raw);
   if (!rawType) throw new Error("Render result is not an image");
+  // YouCam's original is always kept: the post-passes can be re-run on it when they improve (POST_VERSION).
+  const rawPath = `renders/${row.id}-youcam.${rawType.ext}`;
+  await putObject(rawPath, raw, rawType.contentType);
   const final = await finish(row, raw);
-  if (final) await putObject(`renders/${row.id}-youcam.${rawType.ext}`, raw, rawType.contentType); // kept for comparison
-  const bytes = final ?? raw;
-  const type = final ? { ext: "jpg", contentType: "image/jpeg" } : rawType;
-  const path = `renders/${row.id}.${type.ext}`;
-  await putObject(path, bytes, type.contentType);
-  const image = await upsertImage({ session_id: sessionId, kind: "render", path, sha256: sha256(bytes) });
+  const path = final ? finalPath(row.id) : rawPath;
+  if (final) await putObject(path, final, "image/jpeg");
+  const image = await upsertImage({ session_id: sessionId, kind: "render", path, sha256: sha256(final ?? raw) });
   await db
     .from("renders")
-    .update({ status: "success", result_image_id: image.id, completed_at: new Date().toISOString() })
+    .update({ status: "success", result_image_id: image.id, post_version: POST_VERSION, completed_at: new Date().toISOString() })
     .eq("id", row.id)
     .eq("status", "running");
   return { id, engine, status: "success", resultUrl: await signedUrl(path), cached: false };
+}
+
+/** Where a render's post-processed result goes; versioned, so an upgrade never overwrites an earlier result. */
+const finalPath = (renderId: string) => `renders/${renderId}-p${POST_VERSION}.jpg`;
+
+/**
+ * The result path to show for a finished render, after bringing a Nail VTO result made with older post-passes up to
+ * POST_VERSION. YouCam's original is `renders/<id>-youcam.<ext>`; renders from before the post-passes have no such
+ * copy, and their result is YouCam's original itself. Any failure keeps the stored result.
+ */
+async function upgradeResult(row: RenderRow, current: string): Promise<string> {
+  if (row.engine !== "nail_vto" || row.post_version >= POST_VERSION || !row.hand?.session_id) return current;
+  try {
+    const raw = (await firstObject(["png", "jpg", "webp"].map((ext) => `renders/${row.id}-youcam.${ext}`))) ?? (await getObject(current));
+    const final = await finish(row, raw);
+    let path = current;
+    const update: { post_version: number; result_image_id?: string } = { post_version: POST_VERSION };
+    if (final) {
+      path = finalPath(row.id);
+      await putObject(path, final, "image/jpeg");
+      update.result_image_id = (await upsertImage({ session_id: row.hand.session_id, kind: "render", path, sha256: sha256(final) })).id;
+    }
+    await supabaseAdmin().from("renders").update(update).eq("id", row.id).lt("post_version", POST_VERSION);
+    return path;
+  } catch (error) {
+    console.error(`render ${row.id}: upgrade to post-passes v${POST_VERSION} failed`, error);
+    return current;
+  }
+}
+
+/** The first of these storage objects that exists, or null. */
+async function firstObject(paths: string[]): Promise<Uint8Array | null> {
+  for (const path of paths) {
+    try {
+      return await getObject(path);
+    } catch {
+      // not there: try the next
+    }
+  }
+  return null;
 }
 
 /** Cuticle shadow strength: a press-on sits on top of the nail and casts one; polish barely does. */
@@ -247,7 +295,7 @@ async function finish(row: RenderRow, raw: Uint8Array): Promise<Uint8Array | nul
       targets: compositeTargets(spec, row.hand.landmarks),
       fingers: fingerAxes(row.hand.landmarks),
       shadow: CUTICLE_SHADOW[spec.effectType],
-      softenGloss: FINGERS.every((f) => spec.fingers[f].kind === "color"),
+      gloss: glossStrength(FINGERS.map((f) => spec.fingers[f])),
     });
     if (!outcome.ok) {
       console.info(`render ${row.id}: post-passes skipped (${outcome.reason})`);
