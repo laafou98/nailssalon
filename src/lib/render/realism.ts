@@ -68,6 +68,13 @@ const GLOSS_SPREAD = 0.35;
 const GLOSS_SOFTEN = 1;
 /** The softening fades in over about this many pixels inside the nail's edge. */
 const GLOSS_EDGE = 2;
+/**
+ * How far a nail's highlights rise above its base (95th percentile, OKLab L) for them to count as soft (left as
+ * painted) and as hard (fully spread). YouCam's broad sheen on a well-lit photo peaks at about 0.04 and is the look;
+ * spreading it left flat caps (Nov 2). Its studio stripes peak at 0.28 and more.
+ */
+const GLOSS_SOFT_PEAK = 0.08;
+const GLOSS_HARD_PEAK = 0.18;
 /** Width of the highlight knee, in OKLab L. */
 const KNEE = 0.08;
 /** Edge softening, in pixels. */
@@ -393,6 +400,14 @@ function softenGloss(
   const baseL = blur(nail, nailTotal, (j) => Math.min(L(j), rough[j]));
   const peak = new Float32Array(m);
   for (let j = 0; j < m; j++) if (inside[j]) peak[j] = Math.max(0, L(j) - baseL[j]);
+  // Only stripes that are hard get spread; a soft sheen is the look and stays.
+  const peaks: number[][] = nails.map(() => []);
+  for (let j = 0; j < m; j++) if (nail[j] > 0.5) peaks[labels[at(j)] - 1].push(peak[j]);
+  const hardness = peaks.map((p) => {
+    if (p.length === 0) return 0;
+    p.sort((a, b) => a - b);
+    return smoothstep(GLOSS_SOFT_PEAK, GLOSS_HARD_PEAK, p[Math.floor(0.95 * (p.length - 1))]);
+  });
   // Chroma of the body of the nail, not of its white highlights.
   const body = new Float32Array(m);
   for (let j = 0; j < m; j++) body[j] = nail[j] * (1 - smoothstep(0, 0.05, peak[j]));
@@ -401,7 +416,7 @@ function softenGloss(
   const sheen = blur(nail, nailTotal, (j) => peak[j]);
   for (let j = 0; j < m; j++) {
     if (!nail[j] || (peak[j] === 0 && sheen[j] === 0)) continue;
-    const i = at(j), s = GLOSS_SOFTEN * strength[labels[i] - 1] * nail[j];
+    const i = at(j), s = GLOSS_SOFTEN * strength[labels[i] - 1] * hardness[labels[i] - 1] * nail[j];
     lab[i * 3] -= s * (peak[j] - sheen[j]);
     const t = s * smoothstep(0, 0.12, peak[j]);
     lab[i * 3 + 1] += (baseA[j] - lab[i * 3 + 1]) * t;

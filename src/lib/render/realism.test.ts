@@ -105,6 +105,18 @@ describe("realismPass", () => {
     expect(px(soft, NAIL.cx, NAIL.cy + NAIL.ry + 3)).toEqual(px(kept, NAIL.cx, NAIL.cy + NAIL.ry + 3));
   });
 
+  it("leaves a soft sheen as painted: only hard stripes are spread", () => {
+    const stripe = (x: number): boolean => x >= NAIL.cx + 2 && x <= NAIL.cx + 3;
+    const sheen = (x: number): RGB => (stripe(x) ? (RED.map((c) => c + 20) as RGB) : RED); // about 0.055 L above the body
+    const r = render(hand, sheen);
+    // Column averages over the nail's middle rows, so the added grain doesn't decide it.
+    const colL = (img: Raster, x: number) => { let s = 0; for (let y = NAIL.cy - 6; y <= NAIL.cy + 6; y++) s += lab(px(img, x, y)).L; return s / 13; };
+    const contrast = (img: Raster) => colL(img, NAIL.cx + 2) - colL(img, NAIL.cx - 5);
+    const soft = realismPass(hand, r, { gloss: [1] }).image;
+    expect(contrast(r)).toBeGreaterThan(0.04);
+    expect(contrast(soft)).toBeGreaterThan(contrast(r) * 0.7);
+  });
+
   it("measures grain on the smoothest parts, not on a textured background", () => {
     // Skin right around the nail, a coarse knit further out: the ring sees both.
     const knit = raster((x, y) => (Math.hypot(x - NAIL.cx, (y - NAIL.cy) * 0.7) < 22 ? handPx()(x, y) : SKIN.map((c) => c + noise(x, y) * 60) as RGB));

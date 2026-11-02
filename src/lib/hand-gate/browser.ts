@@ -100,7 +100,14 @@ function clampBox(box: Box, width: number, height: number): Box {
   return { x, y, width: Math.min(width, box.x + box.width) - x, height: Math.min(height, box.y + box.height) - y };
 }
 
-/** Exposure over the whole hand; sharpness over the fingertip/nail region only. */
+/**
+ * The window over each nail plate: a square centred this far along the last finger bone (joint 0 → tip 1) with a
+ * half-side this share of that bone's length. On the Nov 2 photos it covers the nail with a little skin around it.
+ */
+const NAIL_WINDOW_CENTRE = 0.75;
+const NAIL_WINDOW_HALF = 0.22;
+
+/** Exposure over the whole hand; sharpness over the fingertip/nail region only; clipping also per nail. */
 export function pixelStats(source: FrameSource, hand: DetectedHand): PixelStats {
   const { width, height } = sourceSize(source);
   const hb = clampBox(handBox(hand.landmarks, width, height), width, height);
@@ -111,7 +118,19 @@ export function pixelStats(source: FrameSource, hand: DetectedHand): PixelStats 
   const pad = Math.max(nb.width, nb.height) * 0.08;
   const nailBox = clampBox({ x: nb.x - pad, y: nb.y - pad, width: nb.width + pad * 2, height: nb.height + pad * 2 }, width, height);
   const region = sampleRegion(source, nailBox, 256);
-  return { meanLuma, clippedFraction, sharpness: laplacianVariance(region.data, region.width, region.height) };
+  const sharpness = laplacianVariance(region.data, region.width, region.height);
+
+  // Blown-out nail plates are a small part of the hand box (7 % on the Nov 2 sage photo) but leave YouCam nothing
+  // to shape or shade, so clipping is also measured in a small window over each nail.
+  const nailClipped = FINGERTIPS.map((t) => {
+    const tip = hand.landmarks[t], joint = hand.landmarks[t - 1];
+    const cx = (tip.x * NAIL_WINDOW_CENTRE + joint.x * (1 - NAIL_WINDOW_CENTRE)) * width;
+    const cy = (tip.y * NAIL_WINDOW_CENTRE + joint.y * (1 - NAIL_WINDOW_CENTRE)) * height;
+    const r = NAIL_WINDOW_HALF * Math.hypot((tip.x - joint.x) * width, (tip.y - joint.y) * height);
+    const box = clampBox({ x: cx - r, y: cy - r, width: 2 * r, height: 2 * r }, width, height);
+    return box.width < 2 || box.height < 2 ? 0 : lumaStats(sampleRegion(source, box, 24).data).clippedFraction;
+  });
+  return { meanLuma, clippedFraction, sharpness, nailClipped };
 }
 
 /** Whole-frame brightness, 0–255. */

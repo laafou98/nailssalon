@@ -205,6 +205,8 @@ const SEED_FRACTION = 0.0002;
 const SHIFT_TOLERANCE = 2;
 /** Closing size: fills bays where a dark press-on tip happens to match a dark background. */
 const CLOSE_SIZE = 9;
+/** Opening size: drops streaks narrower than this (pixels); nails are many times wider. */
+const OPEN_SIZE = 7;
 
 const quantile = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))];
 
@@ -272,6 +274,10 @@ export function paintMask(handLab: Float32Array, youcamLab: Float32Array, w: num
     }
   }
   mask = rankFilter(rankFilter(mask, w, h, CLOSE_SIZE, Math.max, 0), w, h, CLOSE_SIZE, Math.min, 1);
+  // Then open it: when YouCam resampled the photo (a 1058 px photo came back 1056 px, Nov 2) every edge in the render
+  // differs a little, and the flood can follow a finger's outline out of the nail as a streak a few pixels wide,
+  // which the composite then painted navy. A nail survives an opening this small with its corners barely rounded.
+  mask = rankFilter(rankFilter(mask, w, h, OPEN_SIZE, Math.min, 1), w, h, OPEN_SIZE, Math.max, 0);
   // Fill holes: unpainted islands inside a nail (art that happens to match the photo) are still nail.
   const inverse = new Float32Array(n);
   for (let i = 0; i < n; i++) inverse[i] = 1 - mask[i];

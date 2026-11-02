@@ -130,6 +130,10 @@ describe("evaluateHands", () => {
     expect(statusOf(run({ meanLuma: 70 }), "exposure")).toBe("warn");
     expect(statusOf(run({ meanLuma: 240 }), "exposure")).toBe("fail");
     expect(statusOf(run({ clippedFraction: 0.4 }), "exposure")).toBe("fail");
+    // Nov 2 sage photo: thumb, index and pinky plates white, hand box only 7 % clipped.
+    expect(run({ clippedFraction: 0.07, nailClipped: [0.8, 0.2, 0.09, 0.09, 0.12] }).headline).toMatch(/nails washed out/i);
+    expect(statusOf(run({ nailClipped: [0.3, 0.3, 0, 0, 0] }), "exposure")).toBe("warn");
+    expect(statusOf(run({ nailClipped: [0.3, 0.05, 0, 0, 0] }), "exposure")).toBe("pass");
     expect(statusOf(run({ sharpness: 10 }), "sharpness")).toBe("fail");
     expect(statusOf(run({ sharpness: 40 }), "sharpness")).toBe("warn");
   });

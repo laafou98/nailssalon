@@ -40,7 +40,7 @@ export class RenderError extends Error {
  * Version of the post-passes. Bump it when composite.ts or realism.ts change the picture: finished renders made with
  * an older version are re-processed from YouCam's stored original the next time they're shown.
  */
-export const POST_VERSION = 3;
+export const POST_VERSION = 4; // v4 (Nov 2): shading drawn on blown-out nail plates, soft sheen kept, no edge streaks
 
 /** Give up on a task YouCam hasn't finished after this long (observed: 7–10 s). */
 const TASK_TIMEOUT_MS = 2 * 60_000;

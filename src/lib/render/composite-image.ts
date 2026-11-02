@@ -21,7 +21,7 @@ export interface FinishOptions {
 }
 
 export type FinishOutcome =
-  | { ok: true; bytes: Uint8Array; nails: number; recoloured: number }
+  | { ok: true; bytes: Uint8Array; nails: number; recoloured: number; drawn: number }
   | { ok: false; reason: string };
 
 export async function finishRender(handBytes: Uint8Array, renderBytes: Uint8Array, opts: FinishOptions): Promise<FinishOutcome> {
@@ -44,7 +44,7 @@ export async function finishRender(handBytes: Uint8Array, renderBytes: Uint8Arra
   const bytes = await sharp(Buffer.from(real.image.data), { raw: { width, height, channels: 3 } })
     .jpeg({ quality: 92, chromaSubsampling: "4:4:4" })
     .toBuffer();
-  return { ok: true, bytes: new Uint8Array(bytes), nails: Math.max(real.nails, composite?.nails ?? 0), recoloured };
+  return { ok: true, bytes: new Uint8Array(bytes), nails: Math.max(real.nails, composite?.nails ?? 0), recoloured, drawn: composite?.drawn ?? 0 };
 }
 
 async function orientedSize(bytes: Uint8Array): Promise<{ width: number; height: number }> {

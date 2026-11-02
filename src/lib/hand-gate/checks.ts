@@ -28,6 +28,8 @@ export interface PixelStats {
   clippedFraction: number;
   /** Variance of the Laplacian over the fingertip region (higher = sharper). */
   sharpness: number;
+  /** Share of a small window over each nail plate at ≥ 250 (thumb to pinky); absent on callers without landmarks. */
+  nailClipped?: number[];
 }
 
 export type CheckId = "hands" | "pose" | "fingertips" | "orientation" | "coverage" | "size" | "spread" | "sharpness" | "exposure";
@@ -110,6 +112,11 @@ export const THRESHOLDS = {
   lumaBright: 200,
   lumaTooBright: 225,
   clippedFail: 0.2,
+  // A nail window whose brightest tenth is white has a blown-out nail plate: YouCam then has no plate to shape or
+  // shade and paints a flat cap (Nov 2, sage render: three nails at 0.8 / 0.2 / 0.12, hand box only 7 % clipped).
+  nailClippedWindow: 0.1,
+  nailClippedFail: 3, // that many washed-out nails refuse the photo
+  nailClippedWarn: 2,
   stillMinBrightness: 0.7, // a still's whole-frame brightness over the preview's, below which we keep the preview
   // Knuckle width (index MCP → pinky MCP) over palm length (wrist → middle MCP)
   // for a flat hand; the ratio shrinks with cos(turn angle). Our flat test hand
@@ -353,11 +360,14 @@ export function evaluateHands(
   else add("spread", "pass", "Fingers apart");
 
   if (pixels) {
+    const washedOut = pixels.nailClipped?.filter((share) => share >= THRESHOLDS.nailClippedWindow).length ?? 0;
     if (pixels.meanLuma < THRESHOLDS.lumaTooDark) add("exposure", "fail", "Too dark: move towards a light");
     else if (pixels.meanLuma > THRESHOLDS.lumaTooBright || pixels.clippedFraction > THRESHOLDS.clippedFail)
       add("exposure", "fail", "Too bright: avoid direct light or glare");
+    else if (washedOut >= THRESHOLDS.nailClippedFail) add("exposure", "fail", "Nails washed out: tilt your hand away from the light");
     else if (pixels.meanLuma < THRESHOLDS.lumaDim) add("exposure", "warn", "A bit dark: more light helps colour matching");
     else if (pixels.meanLuma > THRESHOLDS.lumaBright) add("exposure", "warn", "A bit bright: soften the light");
+    else if (washedOut >= THRESHOLDS.nailClippedWarn) add("exposure", "warn", "Some nails are washed out: a little less light");
     else add("exposure", "pass", "Lighting looks good");
 
     if (pixels.sharpness < THRESHOLDS.sharpnessFail) add("sharpness", "fail", "Blurry: hold still and tap to focus");

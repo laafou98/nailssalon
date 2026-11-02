@@ -109,8 +109,25 @@ describe("compositeTargets", () => {
   it("maps each finger to its colour and MediaPipe fingertip", () => {
     const targets = compositeTargets(solidSpec("#F0645A", "metallic"), landmarks)!;
     expect(targets).toHaveLength(5);
-    expect(targets[0]).toEqual({ hex: "#F0645A", tip: { x: 0.04, y: 0.08 } }); // thumb tip = landmark 4
+    expect(targets[0]).toEqual({ hex: "#F0645A", tip: { x: 0.04, y: 0.08 }, joint: { x: 0.03, y: 0.06 } }); // thumb tip = landmark 4, joint 3
     expect(targets[4].tip).toEqual({ x: 0.2, y: 0.4 }); // pinky tip = landmark 20
+  });
+
+  it("draws the shading of a nail whose plate the photo blew out, along the finger's axis", () => {
+    // The photo: a white nail plate (clipped) on the skin; YouCam's paint over it is flat.
+    const plate = raster((x, y) => (inEllipse(x, y, 40, 40, 10, 14) ? [255, 255, 255] : handPx(x, y)));
+    const flat = raster((x, y) => (inEllipse(x, y, 40, 40, 10, 14) ? DRIFTED_RED : handPx(x, y)));
+    const finger = { tip: { x: 40 / W, y: 20 / H }, joint: { x: 40 / W, y: 60 / H } }; // pointing up
+    const { image, drawn } = trueColourComposite(plate, flat, { targets: [{ hex: CORAL, ...finger }] });
+    expect(drawn).toBe(1);
+    const L = (x: number, y: number) => labOf(patch(image, x, y)).L;
+    // Darker towards both sides than in the middle, and the sheen sits off centre on one side.
+    expect(L(33, 40)).toBeLessThan(L(40, 40) - 0.02);
+    expect(L(47, 40)).toBeLessThan(L(42, 40) + 0.06);
+    expect(Math.max(L(33, 40), L(47, 40))).toBeLessThan(Math.max(L(40, 40), L(42, 40)));
+    // Still the requested hue; a well-exposed plate gets no drawn shading.
+    expect(deltaE(labOf(patch(image, 40, 40)), labOf(hexToRgb(CORAL)))).toBeLessThan(0.08);
+    expect(trueColourComposite(hand, flat, { targets: [{ hex: CORAL, ...finger }] }).drawn).toBe(0);
   });
 
   it("works without landmarks (colour matching instead)", () => {
