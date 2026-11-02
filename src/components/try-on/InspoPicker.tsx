@@ -7,8 +7,6 @@ import StepNav from "@/components/ui/StepNav";
 import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng, pickDetail, toJpeg } from "@/lib/inspo/browser";
 import {
   DEFAULT_LENGTH,
-  LENGTHS,
-  TIP_SHAPES,
   type TipShape,
   asExtensions,
   draftSpec,
@@ -25,7 +23,7 @@ import {
   withDesigns,
 } from "@/lib/inspo/pick";
 import { smoothOutline } from "@/lib/inspo/contour";
-import { lengthLabel } from "@/lib/recipe/format";
+import LengthShapeSheet, { lengthSummary as summarizeLength } from "./LengthShapeSheet";
 import { go } from "@/lib/transition";
 import type { CutoutDetail } from "@/lib/inspo/design";
 import type { Point } from "@/lib/inspo/region";
@@ -99,17 +97,6 @@ function detailNote(d: CutoutDetail | null): string | null {
   if (!d || d.ok) return null;
   return { side_on: "side view", partial: "partial nail", blurry: "blurry" }[d.reason];
 }
-
-const TIP_LABELS: Record<TipShape, string> = { almond: "Almond", stiletto: "Stiletto", oval: "Oval", square: "Square", squoval: "Squoval" };
-
-/** The tip shapes on the Length & shape sheet. */
-const TIP_PATHS: Record<TipShape, string> = {
-  almond: "M20 2 C32 10 36 26 36 40 V58 H4 V40 C4 26 8 10 20 2Z",
-  stiletto: "M20 1 C26 14 34 30 34 42 V58 H6 V42 C6 30 14 14 20 1Z",
-  oval: "M4 22 C4 10 12 4 20 4 C28 4 36 10 36 22 V58 H4Z",
-  square: "M4 9 Q4 4 9 4 H31 Q36 4 36 9 V58 H4Z",
-  squoval: "M4 15 Q4 4 15 4 H25 Q36 4 36 15 V58 H4Z",
-};
 
 const TEXTURE_LABELS: Record<Texture, string> = {
   matte: "Matte",
@@ -583,7 +570,7 @@ export default function InspoPicker({
   const looking = finding.status === "finding" || (finding.status === "idle" && !error && taps.length === 0);
   const notNails = read !== null && !read.isNailDesign && notNailsOff !== readingKey;
   const finderFailed = finding.status === "failed" && taps.length === 0 && !finderAlertOff && !fixing;
-  const lengthSummary = extensions ? `${TIP_LABELS[shape]} · ${lengthLabel(nailLength)}` : "My own nails";
+  const lengthSummary = summarizeLength(extensions, shape, nailLength);
   const edited = editing !== null ? FINGERS[editing] : null;
   const editedFinger = edited && spec ? spec.fingers[edited] : null;
   const editedFrom = editing !== null ? sources[editing] : null;
@@ -990,55 +977,17 @@ export default function InspoPicker({
       )}
 
       {sheet === "length" && (
-        <Sheet label="Length and shape" onClose={() => setSheet(null)} footer={<button className="n-btn n-btn-k" onClick={() => setSheet(null)}>Done</button>}>
-          <div className="n-top" style={{ alignItems: "flex-start", marginTop: 18 }}>
-            <div>
-              <h2 className="n-d">Length &amp; shape</h2>
-              {extensions && tip === null && length === null && (read?.shape || guess) && (
-                <p>
-                  <span style={{ color: "var(--r)", display: "flex" }}><Icon name="sparkles" size={14} /></span>
-                  Guessed from your photo
-                </p>
-              )}
-            </div>
-            <button className="n-x" onClick={() => setSheet(null)} aria-label="Close"><Icon name="xmark" size={14} /></button>
-          </div>
-          <div className="n-seg" role="tablist" aria-label="Nail length" style={{ marginTop: 20 }}>
-            {([false, true] as const).map((ext) => (
-              <button key={String(ext)} role="tab" aria-selected={extensions === ext} className={extensions === ext ? "on" : ""} onClick={() => setExtensions(ext)}>
-                {ext ? "Extensions" : "My own nails"}
-              </button>
-            ))}
-          </div>
-          {extensions ? (
-            <>
-              <p className="n-eye n-lab">Shape</p>
-              <div className="n-shapes" aria-label="Shape">
-                {TIP_SHAPES.map((t) => (
-                  <button key={t} className={`n-sh ${shape === t ? "on" : ""}`} aria-pressed={shape === t} onClick={() => setTip(t)}>
-                    <i>
-                      <svg viewBox="0 0 40 60" aria-hidden>
-                        <path d={TIP_PATHS[t]} stroke="#141210" strokeWidth="3.5" strokeLinejoin="round" />
-                      </svg>
-                    </i>
-                    <span>{TIP_LABELS[t]}</span>
-                  </button>
-                ))}
-              </div>
-              <p className="n-eye n-lab">Length</p>
-              <div className="n-seg n-seg-tall" style={{ marginTop: 0 }} aria-label="Length">
-                {LENGTHS.map((l) => (
-                  <button key={l.value} className={nailLength === l.value ? "on" : ""} aria-pressed={nailLength === l.value} onClick={() => setLength(l.value)}>
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-              <p className="n-note" style={{ margin: "14px 0 0" }}>Press-on or gel extensions in this shape and length.</p>
-            </>
-          ) : (
-            <p className="n-note" style={{ margin: "14px 0 8px" }}>Polish on your own nails: the art is fitted to your nail length.</p>
-          )}
-        </Sheet>
+        <LengthShapeSheet
+          extensions={extensions}
+          shape={shape}
+          length={nailLength}
+          guessed={tip === null && length === null && Boolean(read?.shape || guess)}
+          ownNailsNote="Polish on your own nails: the art is fitted to your nail length."
+          onExtensions={setExtensions}
+          onShape={setTip}
+          onLength={setLength}
+          onClose={() => setSheet(null)}
+        />
       )}
 
       {sheet === "finish" && spec && (

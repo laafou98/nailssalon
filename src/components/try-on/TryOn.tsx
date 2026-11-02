@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/ui/Icon";
 import StepNav from "@/components/ui/StepNav";
 import type { GatedPhoto } from "@/lib/hand-gate/browser";
+import { DEFAULT_LENGTH, type TipShape, asExtensions } from "@/lib/inspo/pick";
 import type { EngineChoice, EngineName } from "@/lib/render/router";
-import { FINGERS, type DesignSpecInput, type Texture } from "@/lib/spec/types";
+import { FINGERS, type DesignSpecInput, type Texture, designSpecSchema } from "@/lib/spec/types";
 import { go } from "@/lib/transition";
 import CompareSlider from "./CompareSlider";
 import InspoPicker from "./InspoPicker";
+import LengthShapeSheet, { lengthSummary } from "./LengthShapeSheet";
 import Painting, { type PaintStage } from "./Painting";
 import SalonMatch, { type Share } from "./SalonMatch";
 
@@ -75,6 +77,11 @@ export default function TryOn({ photo, onBack, onRetake }: { photo: GatedPhoto; 
   const [view, setView] = useState<View>("choose");
   /** The design screen a failed or finished render goes back to. */
   const [from, setFrom] = useState<"colour" | "photo">("colour");
+  // One colour: polish on the client's own nails, or press-on extensions in a shape and length (a different salon service).
+  const [extensions, setExtensions] = useState(false);
+  const [tip, setTip] = useState<TipShape>("almond");
+  const [length, setLength] = useState<number>(DEFAULT_LENGTH);
+  const [sheet, setSheet] = useState<"length" | null>(null);
   const [stage, setStage] = useState<PaintStage>(1);
   /** The picker holds a lot of state; once opened it stays mounted so Back keeps its edits. */
   const [pickerOpened, setPickerOpened] = useState(false);
@@ -138,13 +145,15 @@ export default function TryOn({ photo, onBack, onRetake }: { photo: GatedPhoto; 
     }, POLL_MS);
   };
 
-  const tryOn = () =>
-    renderSpec({
+  const tryOn = () => {
+    const polish = designSpecSchema.parse({
       version: 1,
       source: { kind: "manual" },
       effectType: "nail_polish",
       fingers: Object.fromEntries(FINGERS.map((f) => [f, { kind: "color", baseHex: hex, texture }])) as DesignSpecInput["fingers"],
     });
+    return renderSpec(extensions ? asExtensions(polish, tip, length) : polish);
+  };
 
   /**
    * Drops the last result once the design it showed is gone (a new inspiration photo), so its quote and WhatsApp
@@ -299,6 +308,12 @@ export default function TryOn({ photo, onBack, onRetake }: { photo: GatedPhoto; 
               </button>
             ))}
           </div>
+          <button className="n-cell" style={{ marginTop: 22 }} onClick={() => setSheet("length")}>
+            <span className="n-ic"><Icon name="hand-raised" size={16} /></span>
+            <b>Length &amp; shape</b>
+            <em>{lengthSummary(extensions, tip, length)}</em>
+            <Icon name="chevron-right" size={14} />
+          </button>
           {upload.status === "error" && <p className="n-note n-note-err">Couldn&apos;t save your photo: {upload.error}</p>}
           <div className="n-cta">
             <button className="n-btn n-btn-r" onClick={tryOn} disabled={busy}>
@@ -307,6 +322,19 @@ export default function TryOn({ photo, onBack, onRetake }: { photo: GatedPhoto; 
             </button>
           </div>
         </div>
+      )}
+
+      {sheet === "length" && (
+        <LengthShapeSheet
+          extensions={extensions}
+          shape={tip}
+          length={length}
+          ownNailsNote="Polish on your own nails, at their natural length."
+          onExtensions={setExtensions}
+          onShape={setTip}
+          onLength={setLength}
+          onClose={() => setSheet(null)}
+        />
       )}
 
       {pickerOpened && (
