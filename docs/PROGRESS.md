@@ -593,3 +593,11 @@ User: "why there's no option for extended nails. we had that on the 1st prototyp
 
 **Next step:** push; on the phone, One colour → Length & shape → Extensions → one real render (≈ 1 unit) to see YouCam's press-on on a plain colour.
 
+
+### Session 25, Nov 2, 2026: caption tooling for the demo video
+User: "prepare to edit the video I'll send you so you can add small descriptions on it. can you setup hyperframes or will you do it by yourself". Decided against HyperFrames (HeyGen's HTML-to-MP4 tool, v0.9.3, a new install and a headless-browser re-render for a few captions): Claude burns the captions itself with ffmpeg.
+- The Homebrew ffmpeg 9 on this Mac has no text renderer (no `drawtext`, no `subtitles`, no libass), so `video/caption-video.py` draws each caption as a transparent PNG with Pillow (Helvetica Neue Bold, dark rounded pill, wraps at 86 % of the width, sits 10 % above the bottom) and overlays it with a 0.25 s fade in/out, VideoToolbox H.264, audio copied. `--preview` saves one frame per caption to `video/preview/`.
+- `video/captions.json` holds 11 draft captions timed to `docs/demo-video-script.md` (placeholders until the real cut arrives). Renders are git-ignored.
+- **Verified** on a synthetic 1170×2532, 160 s clip with audio: 34 s render, all 11 captions placed and wrapped, ΔE renders. Units spent: 0.
+
+**Next step:** user sends the recording; Claude re-times `captions.json` to the cut, renders, and sends back the captioned file plus preview frames.
