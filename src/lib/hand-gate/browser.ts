@@ -178,7 +178,7 @@ export interface GatedPhoto {
   report: GateReport;
 }
 
-/** Crops to the hand at an allowed aspect, caps the long side at 2048 and encodes JPEG. */
+/** Crops to the hand at an allowed aspect, caps the long side at 1920 and encodes JPEG. */
 export async function normalisePhoto(source: FrameSource, analysis: Analysis): Promise<GatedPhoto> {
   const crop = analysis.report.crop;
   if (!crop || analysis.hands.length !== 1) throw new Error("No usable hand to crop");

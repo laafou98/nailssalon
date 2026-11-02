@@ -40,15 +40,15 @@ export const MAX_CROP_BYTES = 300 * 1024;
 
 export type ImageUpload = { ok: true; bytes: Uint8Array; width: number; height: number } | { ok: false; error: string };
 
-/** A JPEG within `maxBytes` and YouCam's input sizes (long side ≤ 2048, short side ≥ `minSide`). */
+/** A JPEG within `maxBytes` and YouCam's input sizes (long side ≤ 1920, short side ≥ `minSide`). */
 export async function parseJpegUpload(file: FormDataEntryValue | null, maxBytes: number, minSide: number): Promise<ImageUpload> {
   if (!(file instanceof Blob)) return { ok: false, error: "Missing image" };
   if (file.size > maxBytes) return { ok: false, error: `Image is larger than ${Math.round(maxBytes / 1024)} KB` };
   const bytes = new Uint8Array(await file.arrayBuffer());
   const size = jpegSize(bytes);
   if (!size) return { ok: false, error: "Image must be a JPEG" };
-  if (Math.max(size.width, size.height) > 2048 || Math.min(size.width, size.height) < minSide) {
-    return { ok: false, error: `Image must be ${minSide}–2048 px on each side` };
+  if (Math.max(size.width, size.height) > 1920 || Math.min(size.width, size.height) < minSide) {
+    return { ok: false, error: `Image must be ${minSide}–1920 px on each side` };
   }
   return { ok: true, bytes, ...size };
 }

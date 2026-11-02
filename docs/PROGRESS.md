@@ -5,11 +5,11 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** Nov 2, 2026 (submission day). **Session 20 fixed the hand photo failing as "too dark" then crashing** (cause not confirmed on a real iPhone yet; see the session log). **Session 19 built the v2 design in the app** (all 14 screens and their animations; committed, not pushed; confirm on a real phone). v3 was rejected for now. Session 18 added a soft luxury direction in Doop (v3 light and dark rows; design only, no code). Session 17 redesigned the app as hi-fi screens in Doop (v2 row; design only, no code). Sessions 15–16 fixed the render look and ran a 38-render test matrix (report: https://claude.ai/artifact/D941rU5Z3KbmF6CkLitqPZ); committed, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
+- **Day:** Nov 2, 2026 (submission day). **Session 21 fixed renders failing with `error_exceed_max_image_size`: hand photos now stop at 1920 px** (committed; not pushed or checked on the phone yet). **Session 20 fixed the hand photo failing as "too dark" then crashing** (cause not confirmed on a real iPhone yet; see the session log). **Session 19 built the v2 design in the app** (all 14 screens and their animations; committed, not pushed; confirm on a real phone). v3 was rejected for now. Session 18 added a soft luxury direction in Doop (v3 light and dark rows; design only, no code). Session 17 redesigned the app as hi-fi screens in Doop (v2 row; design only, no code). Sessions 15–16 fixed the render look and ran a 38-render test matrix (report: https://claude.ai/artifact/D941rU5Z3KbmF6CkLitqPZ); committed, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
-- **Claude's test budget:** 100 units (user, Oct 25). **Spent: 39** (chrome test session 11: 1; render matrix session 16: 38). Render only when a free check can't answer the question.
+- **Claude's test budget:** 100 units (user, Oct 25). **Spent: 40** (chrome test session 11: 1; render matrix session 16: 38; size probe session 21: 1, not in the app's ledger). Render only when a free check can't answer the question.
 - **YouCam units used:** 56 of 1,000 by the ledger (Nov 1, after the session 16 matrix); 13 on Oct 25; was noted as about 6 (smoke test Oct 20 + the user's phone renders Oct 21; `/api/health` shows the ledger total).
 
 **Open items and parked decisions** (keep this list current; details in the session log)
@@ -530,5 +530,22 @@ User's report from the phone (iPhone Safari, Vercel, 04:08): several tries said 
   - Big canvases are released right after use, the rejected preview is at most 1280 px, the overlay is only resized when its size changes, and the video element lets go of the stopped stream.
   - The rejected screen's "All checks" now shows the capture details with brightness, so the next phone test can tell which case happened.
 - **Verified:** typecheck, eslint and tests pass (new unit test). A fake iPhone camera (canvas stream with a resolution switch that goes dark) in the Browser pane: stuck dark falls back to the preview and is accepted; dark for 1 s keeps the 3327×2495 frame; 5 retakes in a row with no errors. Real iPhone camera and memory not tested.
+
+**Next step:** user approves the push and retakes the hand photo on the phone; then the submission material. Official deadline today, 4:45 pm Casablanca.
+
+### Session 21, Nov 2, 2026: "error_exceed_max_image_size" on renders
+User's report from the phone: "The render failed: error_exceed_max_image_size".
+- **What the data showed:** all 4 failed renders (07:43–07:46 UTC, colour and design specs) used one hand photo, 1536×2048, 961 KB. The same session's 1058×1411 photo rendered fine minutes earlier. The largest earlier success was 1830×1830.
+- **Probe (real YouCam calls, same photo, 1 unit):**
+
+| Size | File size | Result |
+|---|---|---|
+| 1536×2048 | 961 KB | `error_exceed_max_image_size` |
+| 1536×2048 | 282 KB | `error_exceed_max_image_size` |
+| 1440×1920 | 592 KB | success |
+
+- **Cause:** pixel dimensions, not file size. YouCam's docs say long side ≤ 2048, but the API rejects a 2048 px long side. The exact limit is somewhere from 1920 up to just under 2048 and wasn't searched for. Sharper iPhone captures (sessions 16 and 20) are what started reaching the cap.
+- **Fix:** the hand photo is capped at 1920 px (`checks.ts`), and server validation matches (`upload.ts`, `design-upload.ts`). A photo already taken at 2048 px has to be retaken.
+- **Verified:** tests (182), typecheck and eslint pass. The 1920 size is confirmed by the real render above. Not yet checked on a phone. Probe files in storage were deleted.
 
 **Next step:** user approves the push and retakes the hand photo on the phone; then the submission material. Official deadline today, 4:45 pm Casablanca.

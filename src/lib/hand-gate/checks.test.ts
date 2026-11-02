@@ -193,8 +193,8 @@ describe("cropForHand", () => {
 });
 
 describe("outputSize", () => {
-  it("caps the long side at 2048 and keeps the aspect", () => {
-    expect(outputSize({ x: 0, y: 0, width: 3000, height: 4000 })).toEqual({ width: 1536, height: 2048 });
+  it("caps the long side at 1920 and keeps the aspect", () => {
+    expect(outputSize({ x: 0, y: 0, width: 3000, height: 4000 })).toEqual({ width: 1440, height: 1920 });
     expect(outputSize({ x: 0, y: 0, width: 900, height: 1200 })).toEqual({ width: 900, height: 1200 });
   });
 });

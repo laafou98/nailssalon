@@ -9,8 +9,8 @@ export const MAX_HAND_BYTES = 4 * 1024 * 1024; // under Vercel's 4.5 MB request 
 const point = z.object({ x: z.number(), y: z.number(), z: z.number().optional() });
 
 export const handMetaSchema = z.object({
-  width: z.coerce.number().int().min(256).max(2048), // YouCam: short side ≥ 256, long side ≤ 2048
-  height: z.coerce.number().int().min(256).max(2048),
+  width: z.coerce.number().int().min(256).max(1920), // YouCam: short side ≥ 256; long side ≤ 1920 in practice (2048 fails)
+  height: z.coerce.number().int().min(256).max(1920),
   landmarks: z.array(point).length(21),
 });
 

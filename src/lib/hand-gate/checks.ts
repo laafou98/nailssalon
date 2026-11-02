@@ -3,7 +3,7 @@
 //
 // Thresholds mirror YouCam Nail VTO's documented input rules
 // (docs.perfectcorp.com/reference/ai_nail_vto): one hand, back of hand,
-// nails unoccluded, palm ideally ≥ half the image area, long side ≤ 2048,
+// nails unoccluded, palm ideally ≥ half the image area, long side ≤ 1920 (their docs say 2048, the API rejects it),
 // short side ≥ 256, aspect ideally 1:1, 3:4 or 4:3.
 
 export interface Point {
@@ -124,7 +124,8 @@ export const THRESHOLDS = {
   posePassDeg: 30, // auto-capture only at or below this turn
   poseFailDeg: 45, // block the photo above this
   cropPadding: 0.12,
-  outputLongSide: 2048,
+  // YouCam's docs allow 2048, but 1536×2048 fails with error_exceed_max_image_size, even at 282 KB; 1440×1920 works (Nov 2).
+  outputLongSide: 1920,
 } as const;
 
 /** Allowed output aspect ratios (width / height). */
@@ -237,7 +238,7 @@ export function cropForHand(box: Box, width: number, height: number): Box {
   return { x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) };
 }
 
-/** Output size for a crop: long side capped at 2048, aspect preserved. */
+/** Output size for a crop: long side capped at 1920, aspect preserved. */
 export function outputSize(crop: Box): { width: number; height: number } {
   const scale = Math.min(1, THRESHOLDS.outputLongSide / Math.max(crop.width, crop.height));
   return { width: Math.round(crop.width * scale), height: Math.round(crop.height * scale) };

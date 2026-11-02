@@ -94,7 +94,7 @@ interface FingerSpec {
   - exposure: mean luminance in range
 - Live guidance overlay: one headline ("Turn your hand flat: bring your little finger towards the camera", "Too dark") plus a 3D hand card that mirrors the hand's turn and flips to a palm face when the palm shows. Auto-capture only when the pose passes.
 - Capture: full-resolution `ImageCapture.takePhoto()` where supported (Chrome/Android), else the video frame (iOS).
-- Output: normalised JPEG (long side ≤ 2048, aspect 1:1, 3:4 or 4:3), plus landmarks JSON. Uploaded to `POST /api/hands`.
+- Output: normalised JPEG (long side ≤ 1920 (YouCam rejects 2048 despite its docs), aspect 1:1, 3:4 or 4:3), plus landmarks JSON. Uploaded to `POST /api/hands`.
 
 ### [B] Nail crops (browser)
 > **Changed Oct 21:** MediaPipe can't find hands in real inspiration photos, so inspiration photos use **tap-to-pick** (`src/lib/inspo/`): the user taps the nails thumb → pinky, each tap is outlined by an OKLab region flood and measured with k-means. The landmark approach below still applies to the client's own hand photo.

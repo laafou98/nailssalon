@@ -43,6 +43,10 @@ describe("parseHandUpload", () => {
   it("enforces YouCam's size limits and needs all 21 landmarks", async () => {
     const tooBig = await parseHandUpload(form(fakeJpeg(3000, 4000), { width: "3000", height: "4000" }));
     expect(tooBig.ok).toBe(false);
+    const rejectedByYouCam = await parseHandUpload(form(fakeJpeg(1536, 2048), { width: "1536", height: "2048" }));
+    expect(rejectedByYouCam.ok).toBe(false);
+    const largest = await parseHandUpload(form(fakeJpeg(1440, 1920), { width: "1440", height: "1920" }));
+    expect(largest.ok).toBe(true);
     const fewPoints = await parseHandUpload(form(fakeJpeg(750, 1000), { landmarks: JSON.stringify(LANDMARKS.slice(0, 5)) }));
     expect(fewPoints.ok).toBe(false);
   });

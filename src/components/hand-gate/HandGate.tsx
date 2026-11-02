@@ -503,7 +503,7 @@ function dispose(still: HTMLCanvasElement | ImageBitmap) {
 }
 
 /**
- * Largest frame we ask for: 4K. The final photo's long side is capped at 2048 px anyway, and every extra megapixel
+ * Largest frame we ask for: 4K. The final photo's long side is capped at 1920 px anyway, and every extra megapixel
  * costs 4 MB of iOS Safari's limited canvas memory.
  */
 const MAX_STILL_PIXELS = 8.3e6;
