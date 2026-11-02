@@ -1,0 +1,20 @@
+{
+  "cuts": [[178.6, 202.0]],
+  "captions": [
+    { "start": 0,   "end": 9,   "label": "NailsSalon", "text": "Try before you paint. A client snaps their hand, picks any nail photo, sees it painted on their own hand, and sends the recipe to their salon." },
+    { "start": 10,  "end": 17,  "label": "Step 1 · Hand photo", "text": "A hand-tracking model runs on the phone and checks the shot live: one hand, flat, all five nails, sharp, well lit." },
+    { "start": 18,  "end": 27,  "label": "Step 1 · Hand photo", "text": "The photo is taken automatically once every check passes. Nothing is uploaded before that." },
+    { "start": 28,  "end": 39,  "label": "Step 2 · Inspiration", "text": "Pick any nail photo: a screenshot, Instagram, Pinterest or the camera roll." },
+    { "start": 40,  "end": 55,  "label": "Step 2 · Reading the design", "text": "The app finds the five nails and reads each one on its own: colour, finish, pattern, shape and length. A per-finger spec, not a picture to copy." },
+    { "start": 56,  "end": 67,  "label": "Length & shape", "text": "Extensions, almond, long. Every part of the look can be changed before anything is rendered." },
+    { "start": 68,  "end": 75,  "label": "Finish", "text": "The finish of each nail, read from the photo. Tap to change it." },
+    { "start": 76,  "end": 95,  "label": "Step 3 · Rendering", "text": "The spec goes to the YouCam AI Nail Virtual Try-On API: one call, every finger with its own colour, finish and art, on the client's real hand." },
+    { "start": 96,  "end": 115, "label": "Step 3 · Rendering", "text": "Three stages: reading the hand, painting the five nails, then matching the salon's polishes." },
+    { "start": 116, "end": 128, "label": "The result", "text": "Before and after, on the client's own hand. Drag the slider to compare." },
+    { "start": 129, "end": 147, "label": "YouCam Nail Transfer", "text": "A second render for comparison: the YouCam AI Nail Transfer API copies the whole photo onto the hand." },
+    { "start": 148, "end": 169, "label": "Approximate", "text": "The app labels this one as approximate, since the photo is copied as a whole, and offers to render each finger exactly instead." },
+    { "start": 170, "end": 178.5, "label": "From the salon's shelf", "text": "Every nail matched to a polish the salon actually stocks, by colour difference, with a price and chair time from the salon's own price list." },
+    { "start": 202.2, "end": 223.5, "label": "The recipe card", "text": "One tap sends the recipe to the salon on WhatsApp. Nail by nail: polish, finish, shape, length, the hand photo and the price." }
+  ],
+  "footer": "Built on the YouCam AI Nail Virtual Try-On and AI Nail Transfer APIs"
+}
