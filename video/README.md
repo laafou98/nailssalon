@@ -1,12 +1,12 @@
-# Demo video captions
+# Demo video
 
-Burns short caption pills onto the screen recording, timed to `docs/demo-video-script.md`.
+The submitted demo is a phone screen recording of the live app, laid on a 1920×1080 canvas with captions beside the phone so no text covers the app.
 
-1. Drop the recording here (or anywhere) and adjust the times in `captions.json` to the real cut.
-2. Run:
+- `demo-captions.json`: the cut list (ranges of the original recording to drop) and the captions, timed on the original recording; the script shifts them past the cuts.
+- `compose-demo.py`: renders the final video. Needs Pillow (`pip3 install pillow`) and ffmpeg.
 
-    python3 video/caption-video.py path/to/demo.mp4 --preview
+```bash
+python3 video/compose-demo.py path/to/recording.mp4 --preview
+```
 
-   Output is `demo-captioned.mp4` next to the input; `video/preview/` gets one frame per caption to check placement.
-
-Needs Pillow (`pip3 install pillow`) and the Homebrew ffmpeg. Audio is copied untouched.
+Output is `video/demo-final.mp4` (git-ignored), with one preview frame per caption in `video/preview/`. The voice-over script is in `docs/demo-video-script.md`.
