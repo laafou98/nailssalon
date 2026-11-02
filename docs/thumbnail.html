@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NailsSalon thumbnail</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,800&family=Geist+Mono:wght@600&family=Geist:wght@400;500&display=block" rel="stylesheet">
+<style>
+  :root { --r: #ff4512; --k: #141210; --bone: #f6f1ec; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1500px; height: 1000px; overflow: hidden; }
+  body { background: var(--r); color: #fff; font-family: "Geist", system-ui, sans-serif; position: relative; }
+  .d { font-family: "Bricolage Grotesque", "Arial Narrow", sans-serif; font-weight: 800; font-stretch: 78%; letter-spacing: -0.04em; line-height: 0.9; }
+  .mono { font-family: "Geist Mono", ui-monospace, monospace; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+
+  .brand { position: absolute; left: 130px; right: 130px; top: 72px; display: flex; justify-content: space-between; align-items: center; z-index: 5; }
+  .logo { font-size: 44px; line-height: 0.8; color: var(--k); }
+  .tag { font-size: 17px; color: var(--k); border: 3px solid var(--k); border-radius: 99px; padding: 11px 20px 10px; }
+
+  .giant { position: absolute; left: 790px; width: 740px; top: 50%; transform: translateY(-50%); text-align: center; font-size: 232px; line-height: 0.8; letter-spacing: -0.05em; color: var(--k); z-index: 1; }
+
+  .copy { position: absolute; left: 130px; top: 240px; width: 640px; z-index: 5; }
+  h1 { font-size: 136px; }
+  h1 em { font-style: normal; color: var(--k); }
+  .lede { margin-top: 30px; font-size: 25px; line-height: 1.4; max-width: 560px; font-weight: 500; }
+  .chip { display: inline-block; margin-top: 34px; background: var(--k); color: #fff; font-size: 15px; padding: 14px 20px 13px; border-radius: 99px; }
+
+  .phone { position: absolute; left: 1040px; top: 170px; width: 310px; height: 640px; z-index: 2;
+           transform: rotate(-5deg); border-radius: 44px; border: 6px solid #fff; overflow: hidden;
+           box-shadow: 14px 14px 0 var(--k); background: #000; }
+  .phone img { width: 100%; height: 112%; object-fit: cover; object-position: 0 0; display: block; }
+
+  .mascot { position: absolute; left: 770px; top: 500px; height: 420px; width: auto; z-index: 3;
+            filter: drop-shadow(6px 0 0 #fff) drop-shadow(-6px 0 0 #fff) drop-shadow(0 6px 0 #fff) drop-shadow(0 -6px 0 #fff); }
+</style>
+</head>
+<body>
+  <div class="brand">
+    <div class="d logo">NAILS<br>SALON!</div>
+    <span class="mono tag">Try before you paint</span>
+  </div>
+
+
+  <div class="copy">
+    <h1 class="d">Wear it<br>before you<br><em>book it.</em></h1>
+    <p class="lede">Any nail photo becomes an exact, per-finger recipe, painted on your own hand first and matched to your salon's real polishes.</p>
+    <span class="mono chip">Built on YouCam AI Nail Virtual Try-On · AI Nail Transfer</span>
+  </div>
+
+  <div class="phone"><img src="screenshots/05-result-compare.jpg" alt=""></div>
+  <img class="mascot" src="../public/v2/mascot.svg" alt="">
+</body>
+</html>
