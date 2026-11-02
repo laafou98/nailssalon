@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** Nov 1, 2026 (submission day). Session 18 added a soft luxury direction in Doop (v3 light and dark rows; design only, no code). Session 17 redesigned the app as hi-fi screens in Doop (v2 row; design only, no code). Sessions 15–16 fixed the render look and ran a 38-render test matrix (report: https://claude.ai/artifact/D941rU5Z3KbmF6CkLitqPZ); committed, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
+- **Day:** Nov 2, 2026 (submission day). **Session 19 built the v2 design in the app** (all 14 screens and their animations; committed, not pushed; confirm on a real phone). v3 was rejected for now. Session 18 added a soft luxury direction in Doop (v3 light and dark rows; design only, no code). Session 17 redesigned the app as hi-fi screens in Doop (v2 row; design only, no code). Sessions 15–16 fixed the render look and ran a 38-render test matrix (report: https://claude.ai/artifact/D941rU5Z3KbmF6CkLitqPZ); committed, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -27,7 +27,8 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **Known limits:** tap-to-pick tuned on 3 photos only (half-hidden thumbs can leak into look-alike backgrounds; chrome outlines aren't accents). Side-on thumbs still get painted by YouCam.
 - **Tooling:** the Vercel MCP returns 403 for deployments and runtime logs. Check deploys with `gh api repos/laafou98/nailssalon/commits/<sha>/status`; debug server errors by reproducing locally (`dev-live` launch config).
 - **Dev quirk:** React dev mode runs the hand-upload effect twice (two sessions per local test). Clean up test sessions, rows and storage objects after local tests; never delete the user's phone sessions or rows that carry real units.
-- **Not urgent:** a visible display/lag polish for the rendered image (user: "fix later"); UI/UX polish deferred, the user wants functionality first.
+- **Not urgent:** a visible display/lag polish for the rendered image (user: "fix later").
+- **v2 phone checks (session 19):** animations and view transitions at real speed, camera preview crop, iOS photo and colour pickers, safe-area insets, sheet drag. See the session log.
 
 ## Build plan tracker
 
@@ -495,3 +496,21 @@ The user shared a second reference (PDND salon Instagram stories) and asked for 
 - Polish names still use the salon's house brand ("Maison"). Hand and nail-art photos are Pexels placeholders; the before/after nail art is an SVG overlay.
 
 **Next step:** user picks a direction (v2 bold or v3 soft) before any of it goes into the app's CSS; the Nov 2 submission material is still open.
+
+### Session 19, Nov 2, 2026: the v2 design, built in the app
+The user chose v2 (bold lacquer and ink, with its animations) over v3. Spec: the Doop frames "v2 · 01–14". Visual and interaction restyle only: render, matching, quote, API and camera-capture logic are unchanged, and no YouCam units were spent.
+- **System:** `globals.css` holds the tokens and `n-` classes. Bricolage Grotesque, Geist and Geist Mono through next/font (self-hosted). Framework7 icons as data (`components/ui/icon-data.ts`), illustrations in `public/v2/`. New `StepNav`, `Sheet` (spring up, drag the grabber down), `Painting`. Light only.
+- **Flow:** `/` Welcome → `/hand` opens straight on the camera → Hand ready (Continue now starts the upload) → Choose → One colour or Add photo → Check nails ↔ Fix nails → Painting → Result → recipe card. `HandGate`, `TryOn` and `InspoPicker` stay mounted behind their screens, so Back keeps the state.
+- **Motion:** all the frames' keyframes, plus real screen transitions through the View Transitions API (`lib/transition.ts`: push, pop, dissolve, up; browsers without it, before iOS 18, just change screen). `prefers-reduced-motion` turns it all off.
+- **Honest versions of what the mockups fake:**
+  - Painting has no percentage or time left: three real stages (request sent, polling, result image and quote loading) and "usually about 15 s". The bar fills by stage.
+  - Painting waits for the result image and the quote (6 s limit) so Result appears complete.
+  - The auto-capture ring follows the real hold timer, the Fix ripple points at the detected nail (photo centre if none), and the Hand ready chips show real checks.
+  - Polish names, prices and durations are real. The base colour shows its hex, as we have no colour names.
+  - The recipe card's nails are sketches from the spec (colours and pattern type), not the real art; the hand photo holds that.
+- **Added beyond the frames, to keep features reachable:** a Finish cell and sheet (every nail at once), Redo on Fix nails, "New photo" on the picture, the compare link on Check nails too (works with no nails picked), "All checks" with the capture details, outliner notes, and a not-found page.
+- **Differs on purpose:** no fake status bar or URL bar; screens scroll with a sticky button where the frame assumes 844 px; the tilt guide only shows when the hand is off; "See it on the client's hand" hides the photo until tapped, as in the frame (it was always visible before).
+- **Verified free (mock flow, 390×844 and 375×640):** real auto-capture through a fake camera stream, upload, one colour, tapping 5 nails with MobileSAM, detection with stubbed replies, swap, sheets, every error card except palm and tilt (those two only reviewed in code), Nail Transfer note, result, slider drag and peek, recipe card, no horizontal scroll. The Browser pane was hidden, which freezes animations: they were confirmed by listing the running animations, a transition caught mid-push, and sampling the peek (38 → 16 → 38), not by watching them at speed. All test rows and storage objects deleted; ledger back to 56.
+- **Dev quirk:** the first upload on a fresh cookie can fail with "Hand photo not found" (the double-mount makes two sessions). Dev only.
+
+**Next step:** user reviews, approves the push, checks v2 on the phone; then the submission material (README, Devpost text, screenshots, demo video).
