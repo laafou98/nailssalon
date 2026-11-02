@@ -36,7 +36,7 @@ async function Recipe({ id }: { id: string }) {
   const recipe = await loadRecipe(id);
   if (!recipe) notFound();
   const { salon, spec, matches, quote } = recipe;
-  const image = await signedUrl(recipe.imagePath);
+  const image = await signedUrl(recipe.imagePath).catch(() => null);
   const pressOn = spec.effectType === "press_on_nails";
   const tip = spec.shape?.split("_")[0];
   const chips = pressOn
@@ -128,8 +128,12 @@ async function Recipe({ id }: { id: string }) {
             <Icon name="photo" size={20} />
             See it on the client&apos;s hand
           </summary>
-          {/* eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL */}
-          <img src={image} alt="The design on the client's hand" className="n-sticker" />
+          {image ? (
+            // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL
+            <img src={image} alt="The design on the client's hand" className="n-sticker" />
+          ) : (
+            <p className="n-note n-note-err">The photo couldn&apos;t be loaded right now. Try again in a moment.</p>
+          )}
           {recipe.engine === "nail_transfer" && (
             <p className="n-cap" style={{ marginTop: 14 }}>Approximate preview: copied from the inspiration photo as a whole, so check which finger carries which design.</p>
           )}

@@ -45,6 +45,10 @@ type Render =
   | { status: "error"; error: string };
 
 const POLL_MS = 2000;
+/** Polls before the phone gives up on its own; the server times a render out after 2 minutes, so this is the backstop. */
+const MAX_POLLS = 100;
+/** Server errors in a row (a flaky poll) tolerated before the render is called failed. */
+const MAX_POLL_ERRORS = 3;
 
 /** JSON body, or a readable error if the server replied with something else (e.g. a platform 500 page). */
 type ApiReply = { error?: string; imageId?: string; id?: string; status?: string; resultUrl?: string; cached?: boolean; engine?: EngineName };
@@ -116,15 +120,19 @@ export default function TryOn({ photo, onBack, onRetake }: { photo: GatedPhoto; 
     }
   };
 
-  const poll = (id: string) => {
+  const poll = (id: string, polls = 0, errors = 0) => {
+    if (polls >= MAX_POLLS) return finish({ status: "error", error: "timeout" });
     pollRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`/api/renders/${id}`, { cache: "no-store" });
         const json = await readJson(res);
+        // A 5xx on one poll (a flaky network, a slow function) is not the render failing: ask again a few times.
+        if (res.status >= 500 && errors + 1 < MAX_POLL_ERRORS) return poll(id, polls + 1, errors + 1);
         if (!res.ok) return finish({ status: "error", error: json.error ?? "unknown_error" });
-        if (json.status === "running") return poll(id);
+        if (json.status === "running") return poll(id, polls + 1, 0);
         finish(toRender(json));
       } catch (e) {
+        if (errors + 1 < MAX_POLL_ERRORS) return poll(id, polls + 1, errors + 1);
         finish({ status: "error", error: String(e) });
       }
     }, POLL_MS);
@@ -441,5 +449,7 @@ function describeRenderError(error: string): { eyebrow: string; title: string; b
   if (error === "timeout") {
     return { eyebrow: "Painting · Failed", title: "That took too long.", body: "The render took too long. Please try again." };
   }
-  return { eyebrow: "Painting · Failed", title: "That one slipped.", body: `The render failed: ${error}. Your try-on credit was not used.` };
+  // YouCam's own error codes (error_*) are never charged; anything else may have been.
+  const charged = !/^error_/.test(error);
+  return { eyebrow: "Painting · Failed", title: "That one slipped.", body: `The render failed: ${error}.${charged ? "" : " Your try-on credit was not used."}` };
 }

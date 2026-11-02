@@ -53,6 +53,11 @@ export async function createRecipe(sessionId: string, renderId: string): Promise
     })
     .select("id")
     .single();
+  if (error?.code === "23505") {
+    // Two requests at once (a double tap): the first one's card wins.
+    const { data: first } = await db.from("recipes").select("id").eq("render_id", renderId).maybeSingle();
+    if (first) return first.id;
+  }
   if (error) throw new Error(`Could not save recipe: ${error.message}`);
   return data.id;
 }

@@ -33,3 +33,13 @@ export async function ensureSessionId(): Promise<string> {
   });
   return data.id;
 }
+
+/** Claude readings a session may ask for (locate + extract per photo, re-reads after retaps). Bounds the API bill. */
+const VISION_CALL_CAP = 60;
+
+/** Counts one vision-model call against the session; false once it has used its share. */
+export async function countVisionCall(sessionId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin().rpc("count_vision_call", { p_session_id: sessionId, p_cap: VISION_CALL_CAP });
+  if (error) throw new Error(`Could not count the vision call: ${error.message}`);
+  return Boolean(data);
+}

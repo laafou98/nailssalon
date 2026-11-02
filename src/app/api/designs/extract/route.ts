@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { errorResponse } from "@/lib/api";
 import { MAX_CROP_BYTES, parseJpegUpload } from "@/lib/render/design-upload";
-import { currentSessionId } from "@/lib/session";
+import { currentSessionId, countVisionCall } from "@/lib/session";
 import { FINGERS } from "@/lib/spec/types";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getObject } from "@/lib/supabase/storage";
@@ -39,6 +39,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (!(await countVisionCall(sessionId))) return Response.json({ error: "Reading limit reached for this session" }, { status: 429 });
     const { data: inspo } = await supabaseAdmin()
       .from("images")
       .select("path")
@@ -60,3 +61,6 @@ export async function POST(request: Request) {
     return errorResponse(error, "POST /api/designs/extract");
   }
 }
+
+/** Vercel: enough for a slow YouCam poll with the post-passes, or a slow vision reading, without a 504. */
+export const maxDuration = 120;

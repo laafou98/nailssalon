@@ -33,3 +33,6 @@ export async function POST(request: Request) {
     return errorResponse(error, "POST /api/renders");
   }
 }
+
+/** Vercel: enough for a slow YouCam poll with the post-passes, or a slow vision reading, without a 504. */
+export const maxDuration = 60;

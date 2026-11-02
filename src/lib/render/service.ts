@@ -4,7 +4,7 @@ import { type DesignSpec, FINGERS } from "@/lib/spec/types";
 import { renderCacheKey, toNailVtoPayload, toTransferPayload, transferCacheKey } from "@/lib/spec/payload";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getObject, putObject, sha256, signedUrl, upsertImage } from "@/lib/supabase/storage";
-import { ENGINES, YouCamError, createTask, getTask } from "@/lib/youcam/client";
+import { ENGINES, type TaskState, YouCamError, createTask, getTask } from "@/lib/youcam/client";
 import { compositeTargets } from "./composite";
 import { finishRender } from "./composite-image";
 import { sniffImageType } from "./image-type";
@@ -47,6 +47,7 @@ const TASK_TIMEOUT_MS = 2 * 60_000;
 
 interface RenderRow {
   id: string;
+  design_id: string;
   engine: EngineName;
   status: "pending" | "running" | "success" | "error";
   error: string | null;
@@ -59,7 +60,10 @@ interface RenderRow {
 }
 
 const RENDER_COLUMNS =
-  "id, engine, status, error, youcam_task_id, created_at, post_version, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id, path, landmarks), design:designs(spec)";
+  "id, design_id, engine, status, error, youcam_task_id, created_at, post_version, result:images!renders_result_image_id_fkey(path), hand:images!renders_hand_image_id_fkey(session_id, path, landmarks), design:designs(spec)";
+
+/** A render that has been pending or running longer than YouCam could possibly take. */
+const isStale = (row: RenderRow) => Date.now() - new Date(row.created_at).getTime() > TASK_TIMEOUT_MS;
 
 async function view(row: RenderRow, cached = false): Promise<RenderView> {
   const { id, engine } = row;
@@ -92,11 +96,21 @@ export async function startRender(
   const ref = engine === "nail_transfer" ? await inspirationImage(sessionId, spec) : null;
   const designPaths = engine === "nail_vto" ? await designImagePaths(sessionId, spec) : {};
 
-  // 1. Cache.
-  const cacheKey = ref ? transferCacheKey(hand.sha256, ref.sha256) : renderCacheKey(spec, hand.sha256);
+  // 1. Cache. Keyed by the hand row (one per session and photo), so a hit is always one this session can poll.
+  const cacheKey = ref ? transferCacheKey(hand.id, ref.sha256) : renderCacheKey(spec, hand.id);
   const { data: hit } = await db.from("renders").select(RENDER_COLUMNS).eq("cache_key", cacheKey).maybeSingle<RenderRow>();
-  if (hit && hit.status !== "error") return view(hit, true);
-  if (hit) await db.from("renders").delete().eq("id", hit.id); // a failed render may be retried
+  if (hit) {
+    const live = hit.status === "pending" || hit.status === "running";
+    if (hit.status === "success" || (live && !isStale(hit))) return view(hit, true);
+    if (live) {
+      // Stuck for over two minutes: collect YouCam's answer if it has one, otherwise time it out (and refund).
+      const settled = await advance(hit);
+      if (settled.status === "success") return { ...settled, cached: true };
+    }
+    // A failed render may be retried: clear the key and its design.
+    await db.from("renders").delete().eq("id", hit.id);
+    await db.from("designs").delete().eq("id", hit.design_id);
+  }
 
   // Claim the cache key first: the unique constraint stops two identical requests both spending.
   const { data: design, error: designError } = await db
@@ -105,15 +119,18 @@ export async function startRender(
     .select("id")
     .single();
   if (designError) throw new Error(`Could not save design: ${designError.message}`);
+  const dropDesign = () => db.from("designs").delete().eq("id", design.id);
   const { data: render, error: insertError } = await db
     .from("renders")
     .insert({ design_id: design.id, hand_image_id: hand.id, cache_key: cacheKey, engine, status: "pending" })
     .select("id")
     .single();
   if (insertError) {
+    await dropDesign();
     if (insertError.code === "23505") {
-      const { data: racing } = await db.from("renders").select(RENDER_COLUMNS).eq("cache_key", cacheKey).single<RenderRow>();
-      return view(racing!, true);
+      const { data: racing } = await db.from("renders").select(RENDER_COLUMNS).eq("cache_key", cacheKey).maybeSingle<RenderRow>();
+      if (!racing) throw new RenderError("Render not found", 404); // the other request gave up meanwhile: the client retries
+      return view(racing, true);
     }
     throw new Error(`Could not create render: ${insertError.message}`);
   }
@@ -129,6 +146,7 @@ export async function startRender(
   });
   if (reserveError || !reserved) {
     await db.from("renders").delete().eq("id", render.id);
+    await dropDesign();
     throw reserveError
       ? new Error(`Could not reserve units: ${reserveError.message}`)
       : new RenderError("Try-on limit reached for this session", 429);
@@ -141,7 +159,8 @@ export async function startRender(
       ? toTransferPayload(handUrl, await signedUrl(ref.path))
       : toNailVtoPayload(spec, handUrl, await signAll(designPaths));
     const taskId = await createTask(engine, payload);
-    await db.from("renders").update({ status: "running", youcam_task_id: taskId }).eq("id", render.id);
+    const { error } = await db.from("renders").update({ status: "running", youcam_task_id: taskId }).eq("id", render.id);
+    if (error) throw new Error(`Could not record the YouCam task: ${error.message}`);
     return { id: render.id, engine, status: "running" };
   } catch (error) {
     const message = error instanceof YouCamError ? (error.code ?? error.message) : String(error);
@@ -184,8 +203,11 @@ async function signAll(paths: Record<string, string>): Promise<Record<string, st
   return Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([id, path]) => [id, await signedUrl(path)])));
 }
 
-/** Marks a render failed and refunds its unit, exactly once (only the caller that flips the status refunds). */
-async function failRender(renderId: string, error: string): Promise<void> {
+/**
+ * Marks a render failed, exactly once (only the caller that flips the status refunds). The unit is given back unless
+ * YouCam charged for it: a result we could not collect (expired URL, storage failure) still cost one.
+ */
+async function failRender(renderId: string, error: string, { refund = true } = {}): Promise<void> {
   const db = supabaseAdmin();
   const { data } = await db
     .from("renders")
@@ -193,7 +215,7 @@ async function failRender(renderId: string, error: string): Promise<void> {
     .eq("id", renderId)
     .in("status", ["pending", "running"])
     .select("id");
-  if (data?.length) await db.rpc("refund_units", { p_render_id: renderId });
+  if (data?.length && refund) await db.rpc("refund_units", { p_render_id: renderId });
 }
 
 /** Current state of a render. While running, checks YouCam once (the browser polls this). */
@@ -201,36 +223,54 @@ export async function refreshRender(sessionId: string, renderId: string): Promis
   const db = supabaseAdmin();
   const { data: row } = await db.from("renders").select(RENDER_COLUMNS).eq("id", renderId).maybeSingle<RenderRow>();
   if (!row || row.hand?.session_id !== sessionId) throw new RenderError("Render not found", 404);
-  if (row.status !== "running" || !row.youcam_task_id) return view(row);
+  return advance(row);
+}
+
+/**
+ * Moves a live render along: asks YouCam, collects a finished result, or fails it once it is stale. A row never
+ * stays pending or running for good, so its cache key and its unit are always freed in the end.
+ */
+async function advance(row: RenderRow): Promise<RenderView> {
+  const db = supabaseAdmin();
+  const { id, engine } = row;
+  if (row.status === "success" || row.status === "error") return view(row);
+  const fail = async (error: string, refund = true): Promise<RenderView> => {
+    await failRender(id, error, { refund });
+    return { id, engine, status: "error", error };
+  };
+
+  // Still pending: the task was never recorded (the server stopped between the insert and the YouCam call).
+  if (!row.youcam_task_id) return isStale(row) ? fail("timeout") : { id, engine, status: "running" };
 
   // Ask YouCam before applying the timeout: a task that finished while nobody was
   // polling has already cost a unit and must still be collected.
-  const { id, engine } = row;
-  const state = await getTask(engine, row.youcam_task_id);
-  if (state.status === "running") {
-    if (Date.now() - new Date(row.created_at).getTime() > TASK_TIMEOUT_MS) {
-      await failRender(id, "timeout");
-      return { id, engine, status: "error", error: "timeout" };
-    }
-    return { id, engine, status: "running" };
+  let state: TaskState;
+  try {
+    state = await getTask(engine, row.youcam_task_id);
+  } catch (error) {
+    // YouCam unreachable, or the task forgotten: keep waiting while young, give up once stale.
+    if (!isStale(row)) throw error;
+    return fail(error instanceof YouCamError && error.httpStatus === 404 ? "task_not_found" : "youcam_unreachable");
   }
-  if (state.status === "error") {
-    await failRender(id, state.error);
-    return { id, engine, status: "error", error: state.error };
-  }
+  if (state.status === "running") return isStale(row) ? fail("timeout") : { id, engine, status: "running" };
+  if (state.status === "error") return fail(state.error);
 
   // Success: copy the result out of YouCam before its URL expires. Safe to repeat if two polls race.
   const res = await fetch(state.resultUrl);
+  // A result URL that no longer serves (they expire after 2 h) will never serve: the unit is spent, the row must not stay running.
+  if (res.status >= 400 && res.status < 500) return fail(`result_expired (${res.status})`, false);
   if (!res.ok) throw new Error(`Could not download render result (${res.status})`);
   const raw = new Uint8Array(await res.arrayBuffer());
   const rawType = sniffImageType(raw);
-  if (!rawType) throw new Error("Render result is not an image");
+  if (!rawType) return fail("result_not_an_image", false);
   // YouCam's original is always kept: the post-passes can be re-run on it when they improve (POST_VERSION).
   const rawPath = `renders/${row.id}-youcam.${rawType.ext}`;
   await putObject(rawPath, raw, rawType.contentType);
   const final = await finish(row, raw);
   const path = final ? finalPath(row.id) : rawPath;
   if (final) await putObject(path, final, "image/jpeg");
+  const sessionId = row.hand?.session_id;
+  if (!sessionId) throw new Error("Render has no owning session");
   const image = await upsertImage({ session_id: sessionId, kind: "render", path, sha256: sha256(final ?? raw) });
   await db
     .from("renders")

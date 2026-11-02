@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Icon from "@/components/ui/Icon";
 
 /** Where a render really is. The API gives no percentage, so the bar follows these stages instead of a made-up number. */
@@ -6,8 +9,15 @@ export type PaintStage = 1 | 2 | 3;
 const STEPS = ["Reading your hand", "Painting 5 nails", "Matching your salon's polishes"];
 /** Stage 2 fills slowly over the usual render time; it never reaches the end on its own. */
 const WIDTH: Record<PaintStage, string> = { 1: "20%", 2: "84%", 3: "100%" };
+/** YouCam usually answers in 10–20 s; past this the client is told it is slow, not stuck (one phone render took 65 s). */
+const SLOW_MS = 30_000;
 
 export default function Painting({ stage }: { stage: PaintStage }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), SLOW_MS);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <div className="n-scr n-scr-dark n-paint">
       <div className="n-nav" style={{ padding: "6px 20px 0 24px", height: 46 }}>
@@ -53,7 +63,7 @@ export default function Painting({ stage }: { stage: PaintStage }) {
         </h1>
         <div className="n-pct">
           <b>Step {stage} of 3</b>
-          <span>{stage === 3 ? "ALMOST DONE" : "USUALLY ABOUT 15 S"}</span>
+          <span>{stage === 3 ? "ALMOST DONE" : slow ? "SLOWER THAN USUAL · STILL PAINTING" : "USUALLY ABOUT 15 S"}</span>
         </div>
         <div className="n-bar" role="progressbar" aria-valuetext={STEPS[stage - 1]}>
           <i className={stage === 2 ? "long" : undefined} style={{ width: WIDTH[stage] }} />

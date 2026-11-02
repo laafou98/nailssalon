@@ -18,3 +18,6 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     return errorResponse(error, "GET /api/renders/:id");
   }
 }
+
+/** Vercel: enough for a slow YouCam poll with the post-passes, or a slow vision reading, without a 504. */
+export const maxDuration = 60;

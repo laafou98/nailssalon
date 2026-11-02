@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { errorResponse } from "@/lib/api";
-import { currentSessionId } from "@/lib/session";
+import { currentSessionId, countVisionCall } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getObject } from "@/lib/supabase/storage";
 import { locateNails } from "@/lib/vision/claude";
@@ -17,6 +17,7 @@ export async function POST(request: Request) {
   if (!body.success) return Response.json({ error: "Missing inspoImageId" }, { status: 400 });
 
   try {
+    if (!(await countVisionCall(sessionId))) return Response.json({ error: "Reading limit reached for this session" }, { status: 429 });
     const { data: inspo } = await supabaseAdmin()
       .from("images")
       .select("path, width, height")
@@ -37,3 +38,6 @@ export async function POST(request: Request) {
     return errorResponse(error, "POST /api/designs/locate");
   }
 }
+
+/** Vercel: enough for a slow YouCam poll with the post-passes, or a slow vision reading, without a 504. */
+export const maxDuration = 120;
