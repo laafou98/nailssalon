@@ -606,6 +606,6 @@ User: "prepare to edit the video I'll send you so you can add small descriptions
 User sent the phone recording (3:43, 576×1248, copy-a-design path only, silent audio) and asked to cut the WhatsApp scene, jump straight to the recipe card, open with an introduction, and keep captions off the app's UI.
 - `video/compose-demo.py` lays the recording on a 1920×1080 dark canvas (phone 471×1020 on the right) with the captions in a text column on the left, so nothing covers the app; a small footer names both YouCam APIs throughout. `video/demo-captions.json` holds the cut list and 14 captions in the original timeline (the script shifts them past the cuts). Output 30 fps, no audio (the source track measured −91 dB).
 - Cut 2:58.6–3:22.0 (the WhatsApp hand-off); the estimate screen now jumps to the recipe card. Result `video/demo-final.mp4`, 3:20, git-ignored; preview frames in `video/preview/`.
-- **Still over the 3:00 limit by 20 s.** The two Painting waits (1:16–1:55, 40 s; 2:09–2:27, 18 s) are the obvious trims; not cut because the user only asked for the WhatsApp cut.
+- The first cut ran 3:20, over the 3:00 limit. User: bring the 40 s Painting wait to 20 s and trim 4 s from the 18 s one. Cuts now 1:34.0–1:54.0 (lands on "slower than usual", then step 3 and the result) and 2:16.0–2:20.0, plus the WhatsApp cut. The "three stages" caption was dropped (no room); the rendering caption runs across the first cut. **Result: 2:56.**
 
-**Next step:** user reviews the cut; decide whether to trim the Painting waits to get under 3:00; voice-over is still to be recorded.
+**Next step:** user reviews the 2:56 cut; voice-over is still to be recorded (send the audio and Claude muxes it in).
