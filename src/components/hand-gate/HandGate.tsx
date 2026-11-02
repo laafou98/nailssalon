@@ -10,8 +10,9 @@ import {
   type GateReport,
   HAND_CONNECTIONS,
   type HandPose,
+  stillMatchesPreview,
 } from "@/lib/hand-gate/checks";
-import { type GatedPhoto, analyze, loadLandmarker, normalisePhoto } from "@/lib/hand-gate/browser";
+import { type GatedPhoto, analyze, frameLuma, loadLandmarker, normalisePhoto, releaseCanvas } from "@/lib/hand-gate/browser";
 import Icon from "@/components/ui/Icon";
 import StepNav from "@/components/ui/StepNav";
 import TiltGuide from "./TiltGuide";
@@ -21,6 +22,7 @@ type Phase = "idle" | "loading" | "live" | "checking" | "rejected" | "accepted" 
 const AUTO_CAPTURE_MS = 1500; // the photo must stay good this long before we take it
 const PIXEL_EVERY_MS = 250;
 const REPORT_EVERY_MS = 200;
+const REJECTED_PREVIEW_PX = 1280; // long side of the outlined photo on the rejected screen
 
 export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) => void }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -45,6 +47,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     rafRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
   }, []);
 
   const unmounted = useRef(false);
@@ -72,12 +75,14 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     const analysis = await analyze(landmarker, still);
     setReport(analysis.report);
     if (!analysis.report.ok) {
+      const scale = Math.min(1, REJECTED_PREVIEW_PX / Math.max(analysis.width, analysis.height));
       const canvas = document.createElement("canvas");
-      canvas.width = analysis.width;
-      canvas.height = analysis.height;
-      canvas.getContext("2d")!.drawImage(still, 0, 0);
+      canvas.width = Math.round(analysis.width * scale);
+      canvas.height = Math.round(analysis.height * scale);
+      canvas.getContext("2d")!.drawImage(still, 0, 0, canvas.width, canvas.height);
       drawHands(canvas, analysis.hands, toneOf(analysis.report), false);
       setRejectedUrl(canvas.toDataURL("image/jpeg", 0.8));
+      releaseCanvas(canvas);
       setPhase("rejected");
       return;
     }
@@ -137,8 +142,9 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
         const analysis = await analyze(landmarker, video, now, withPixels);
         const overlay = overlayRef.current;
         if (overlay) {
-          overlay.width = analysis.width;
-          overlay.height = analysis.height;
+          // Assigning a canvas's size reallocates it, even to the same value.
+          if (overlay.width !== analysis.width) overlay.width = analysis.width;
+          if (overlay.height !== analysis.height) overlay.height = analysis.height;
           drawHands(overlay, analysis.hands, toneOf(analysis.report));
         }
         setPose(analysis.report.pose);
@@ -170,22 +176,31 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     setPhase("checking");
     // Prefer a real photo from the camera: video frames are low-resolution and heavily
     // compressed on phones. Where ImageCapture isn't supported (iOS Safari), take one frame at the
-    // camera's top video resolution instead of the 1080p preview's.
+    // camera's top video resolution instead of the 1080p preview's. The preview's own frame, which just
+    // passed the live checks, is kept as the fallback if the sharper one comes out dark.
+    const preview = grabFrame(video);
+    const previewLuma = frameLuma(preview);
     let still: HTMLCanvasElement | ImageBitmap | null = await takeFullPhoto(streamRef.current);
     let source = "camera photo";
-    if (!still) {
-      const sharp = await raiseResolution(streamRef.current, video);
-      source = sharp ? "full-resolution video frame" : "video frame";
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d")!.drawImage(video, 0, 0);
-      still = canvas;
+    if (!still && (await raiseResolution(streamRef.current, video, previewLuma))) {
+      still = grabFrame(video);
+      source = "full-resolution video frame";
     }
-    setCaptureInfo(`from a ${still.width}×${still.height} ${source}`);
+    const stillLuma = still ? frameLuma(still) : previewLuma;
+    if (still && !stillMatchesPreview(previewLuma, stillLuma)) {
+      dispose(still);
+      still = null;
+    }
+    if (!still) source = "video frame";
+    const final = still ?? preview;
+    if (final !== preview) releaseCanvas(preview);
+    setCaptureInfo(`from a ${final.width}×${final.height} ${source} · brightness ${Math.round(stillLuma)}, preview ${Math.round(previewLuma)}`);
     stopCamera();
-    await checkStill(landmarker, still);
-    if (still instanceof ImageBitmap) still.close();
+    try {
+      await checkStill(landmarker, final);
+    } finally {
+      dispose(final);
+    }
   };
 
   const captureNow = async () => {
@@ -211,8 +226,11 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
         loadLandmarker(),
         createImageBitmap(file, { imageOrientation: "from-image" }),
       ]);
-      await checkStill(landmarker, bitmap);
-      bitmap.close();
+      try {
+        await checkStill(landmarker, bitmap);
+      } finally {
+        bitmap.close();
+      }
     } catch (e) {
       fail(e);
     } finally {
@@ -314,7 +332,7 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
         <div className="n-scr">
           <StepNav step={1} fill={40} onBack={startCamera} label="Back to the camera" />
           <Rejected report={report} url={rejectedUrl} />
-          <CheckDetails checks={report.checks} />
+          <CheckDetails checks={report.checks} caption={`Photo ${captureInfo}`} />
           <div className="n-cta">
             <button className="n-btn n-btn-k" onClick={startCamera}>
               <Icon name="arrow-counterclockwise" size={20} />
@@ -471,14 +489,33 @@ async function takeFullPhoto(stream: MediaStream | null): Promise<ImageBitmap | 
   }
 }
 
-/** Largest frame we ask for: 12 MP stays within iOS Safari's canvas memory limit (16.7 MP). */
-const MAX_STILL_PIXELS = 12.5e6;
+function grabFrame(video: HTMLVideoElement) {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d")!.drawImage(video, 0, 0);
+  return canvas;
+}
+
+function dispose(still: HTMLCanvasElement | ImageBitmap) {
+  if (still instanceof ImageBitmap) still.close();
+  else releaseCanvas(still);
+}
+
+/**
+ * Largest frame we ask for: 4K. The final photo's long side is capped at 2048 px anyway, and every extra megapixel
+ * costs 4 MB of iOS Safari's limited canvas memory.
+ */
+const MAX_STILL_PIXELS = 8.3e6;
+/** How long the camera gets to reach the preview's brightness again after the switch. */
+const SETTLE_MS = 2000;
 
 /**
  * Switches the live stream to the camera's top resolution and waits for a frame at that size. The preview runs at
- * 1080p (fast hand tracking); on an iPhone that left the nails about 80–100 px wide. True if the frame got larger.
+ * 1080p (fast hand tracking); on an iPhone that left the nails about 80–100 px wide. True once a larger frame is
+ * showing at about the preview's brightness, since a camera can restart its exposure on the switch.
  */
-async function raiseResolution(stream: MediaStream | null, video: HTMLVideoElement): Promise<boolean> {
+async function raiseResolution(stream: MediaStream | null, video: HTMLVideoElement, previewLuma: number): Promise<boolean> {
   const track = stream?.getVideoTracks()[0];
   const caps = track?.getCapabilities?.();
   const maxW = caps?.width?.max, maxH = caps?.height?.max;
@@ -497,6 +534,11 @@ async function raiseResolution(stream: MediaStream | null, video: HTMLVideoEleme
   }
   // The first frames after a switch can still be settling (exposure, focus); give it a few.
   await new Promise((r) => setTimeout(r, 300));
+  const settled = performance.now() + SETTLE_MS;
+  while (!stillMatchesPreview(previewLuma, frameLuma(video))) {
+    if (performance.now() > settled) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   return true;
 }
 

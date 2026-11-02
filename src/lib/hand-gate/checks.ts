@@ -110,6 +110,7 @@ export const THRESHOLDS = {
   lumaBright: 200,
   lumaTooBright: 225,
   clippedFail: 0.2,
+  stillMinBrightness: 0.7, // a still's whole-frame brightness over the preview's, below which we keep the preview
   // Knuckle width (index MCP → pinky MCP) over palm length (wrist → middle MCP)
   // for a flat hand; the ratio shrinks with cos(turn angle). Our flat test hand
   // measured 0.70 in live video (0.75–0.81 as stills); the edge-on phone photo
@@ -251,6 +252,14 @@ function polygonArea(points: { x: number; y: number }[]): number {
     sum += a.x * b.y - b.x * a.y;
   }
   return Math.abs(sum) / 2;
+}
+
+/**
+ * A still from the same moment as the preview should be about as bright. Much darker points to the capture (a camera
+ * still settling after a resolution switch, a blank frame), not the room, so don't judge the light on it.
+ */
+export function stillMatchesPreview(previewLuma: number, stillLuma: number): boolean {
+  return stillLuma >= previewLuma * THRESHOLDS.stillMinBrightness;
 }
 
 export function evaluateHands(

@@ -114,6 +114,21 @@ export function pixelStats(source: FrameSource, hand: DetectedHand): PixelStats 
   return { meanLuma, clippedFraction, sharpness: laplacianVariance(region.data, region.width, region.height) };
 }
 
+/** Whole-frame brightness, 0–255. */
+export function frameLuma(source: FrameSource): number {
+  const { width, height } = sourceSize(source);
+  return lumaStats(sampleRegion(source, { x: 0, y: 0, width, height }, 64).data).meanLuma;
+}
+
+/**
+ * Frees a canvas's pixels now instead of waiting for the garbage collector. A failed try used to hold about 100 MB
+ * this way, and iOS Safari kills tabs and limits canvas memory.
+ */
+export function releaseCanvas(canvas: HTMLCanvasElement) {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 export interface Analysis {
   hands: DetectedHand[];
   report: GateReport;
@@ -175,6 +190,7 @@ export async function normalisePhoto(source: FrameSource, analysis: Analysis): P
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Encoding failed"))), "image/jpeg", 0.92),
   );
+  releaseCanvas(canvas);
   const landmarks = analysis.hands[0].landmarks.map((p) => ({
     x: (p.x * analysis.width - crop.x) / crop.width,
     y: (p.y * analysis.height - crop.y) / crop.height,

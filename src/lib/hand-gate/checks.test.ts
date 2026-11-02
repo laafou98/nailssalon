@@ -10,6 +10,7 @@ import {
   fingersCurled,
   outputSize,
   showsWholeHand,
+  stillMatchesPreview,
 } from "./checks";
 
 // A right hand, back to the camera, fingers up, in a square frame.
@@ -47,6 +48,13 @@ describe("evaluateHands", () => {
     expect(evaluateHands([], 1000, 1000, undefined, { meanLuma: 40, clippedFraction: 0 }).headline).toMatch(/too dark/i);
     expect(evaluateHands([], 1000, 1000, undefined, { meanLuma: 150, clippedFraction: 0.5 }).headline).toMatch(/too bright/i);
     expect(evaluateHands([], 1000, 1000, undefined, { meanLuma: 140, clippedFraction: 0 }).headline).toMatch(/show the back/i);
+  });
+
+  it("spots a still that came out much darker than the preview", () => {
+    expect(stillMatchesPreview(120, 110)).toBe(true);
+    expect(stillMatchesPreview(120, 140)).toBe(true);
+    expect(stillMatchesPreview(120, 40)).toBe(false);
+    expect(stillMatchesPreview(120, 0)).toBe(false);
   });
 
   it("fails with no hand or two hands", () => {

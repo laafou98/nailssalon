@@ -5,7 +5,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 
 ## Current status
 
-- **Day:** Nov 2, 2026 (submission day). **Session 19 built the v2 design in the app** (all 14 screens and their animations; committed, not pushed; confirm on a real phone). v3 was rejected for now. Session 18 added a soft luxury direction in Doop (v3 light and dark rows; design only, no code). Session 17 redesigned the app as hi-fi screens in Doop (v2 row; design only, no code). Sessions 15–16 fixed the render look and ran a 38-render test matrix (report: https://claude.ai/artifact/D941rU5Z3KbmF6CkLitqPZ); committed, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
+- **Day:** Nov 2, 2026 (submission day). **Session 20 fixed the hand photo failing as "too dark" then crashing** (cause not confirmed on a real iPhone yet; see the session log). **Session 19 built the v2 design in the app** (all 14 screens and their animations; committed, not pushed; confirm on a real phone). v3 was rejected for now. Session 18 added a soft luxury direction in Doop (v3 light and dark rows; design only, no code). Session 17 redesigned the app as hi-fi screens in Doop (v2 row; design only, no code). Sessions 15–16 fixed the render look and ran a 38-render test matrix (report: https://claude.ai/artifact/D941rU5Z3KbmF6CkLitqPZ); committed, not pushed yet. Earlier: Oct 31, plan Day 11; build at Day 8. Session 13 built polish matching + quote (slim Day 7, pushed) and the recipe card + WhatsApp hand-off (Day 8, not pushed yet). **Rescoped plan (user, Oct 31):** Day 9 cut (fidelity scorer, i18n); Nov 1: README, Devpost text, screenshots, demo video, submit. Phone checks still open: the recipe card + WhatsApp preview on a real phone, Sonnet reading on Vercel, one extension render (≈ 1 unit).
 - **Deadline:** submit by **Nov 1, 2026**. The official deadline is Nov 2, 11:45 am ET (4:45 pm Casablanca).
 - **Live:** https://nailssalon-five.vercel.app, which auto-deploys from `main`. Health check at `/api/health`. The whole flow so far is on `/hand`: hand photo (quality gate) → try-on with one colour, or tap-to-pick from an inspiration photo.
 - **Repo:** https://github.com/laafou98/nailssalon (public, MIT)
@@ -28,6 +28,7 @@ The plan and design live in [ARCHITECTURE.md](ARCHITECTURE.md). The hackathon br
 - **Tooling:** the Vercel MCP returns 403 for deployments and runtime logs. Check deploys with `gh api repos/laafou98/nailssalon/commits/<sha>/status`; debug server errors by reproducing locally (`dev-live` launch config).
 - **Dev quirk:** React dev mode runs the hand-upload effect twice (two sessions per local test). Clean up test sessions, rows and storage objects after local tests; never delete the user's phone sessions or rows that carry real units.
 - **Not urgent:** a visible display/lag polish for the rendered image (user: "fix later").
+- **Hand capture on iPhone (session 20):** after pushing, check "All checks" on a retake: it shows the photo's brightness next to the preview's. Equal numbers plus "full-resolution video frame" means the sharp frame works; "video frame" with a lower brightness means the fallback saved it.
 - **v2 phone checks (session 19):** animations and view transitions at real speed, camera preview crop, iOS photo and colour pickers, safe-area insets, sheet drag. See the session log.
 
 ## Build plan tracker
@@ -514,3 +515,20 @@ The user chose v2 (bold lacquer and ink, with its animations) over v3. Spec: the
 - **Dev quirk:** the first upload on a fresh cookie can fail with "Hand photo not found" (the double-mount makes two sessions). Dev only.
 
 **Next step:** user reviews, approves the push, checks v2 on the phone; then the submission material (README, Devpost text, screenshots, demo video).
+
+### Session 20, Nov 2, 2026: hand photo "too dark", then a crash
+User's report from the phone (iPhone Safari, Vercel, 04:08): several tries said too dark, then the app crashed. Their screenshot shows the live outline in orange (the live checks passed) over a black view on "Checking photo…". So the taken photo was judged differently from the preview. No YouCam units spent.
+- **Suspected, not confirmed on a device:**
+  1. iOS takes its still after switching the stream to the camera's top resolution, and a camera can restart exposure on that switch, so the frame can be darker than the preview. The old code waited only 300 ms.
+  2. Each failed try held two 12 MP canvases (about 100 MB) until garbage collection, plus a full-size JPEG string, on a browser that kills tabs for memory.
+- **Measured and ruled out or left open:**
+  - Detector mode switching: WASM heap flat at 40 MB over 40 retake cycles (Chromium), so it isn't that leak. GPU memory wasn't measurable.
+  - Canvas limit: iPhone 17 simulator kept 24 unreleased 12 MP canvases with correct pixels, so blank canvases did not reproduce there. A simulator uses the Mac's memory, so this doesn't settle a real phone.
+- **Fix (`HandGate.tsx`, `browser.ts`, `checks.ts`):**
+  - A copy of the preview frame is taken first, and a still under 70% of its brightness is thrown away in favour of that frame (`stillMatchesPreview`). The wait for the camera to get back to that brightness is up to 2 s more.
+  - Stills capped at 4K (8.3 MP, was 12.5); the final photo is capped at 2048 px anyway.
+  - Big canvases are released right after use, the rejected preview is at most 1280 px, the overlay is only resized when its size changes, and the video element lets go of the stopped stream.
+  - The rejected screen's "All checks" now shows the capture details with brightness, so the next phone test can tell which case happened.
+- **Verified:** typecheck, eslint and tests pass (new unit test). A fake iPhone camera (canvas stream with a resolution switch that goes dark) in the Browser pane: stuck dark falls back to the preview and is accepted; dark for 1 s keeps the 3327×2495 frame; 5 retakes in a row with no errors. Real iPhone camera and memory not tested.
+
+**Next step:** user approves the push and retakes the hand photo on the phone; then the submission material. Official deadline today, 4:45 pm Casablanca.
