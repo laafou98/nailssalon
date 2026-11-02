@@ -41,6 +41,13 @@ export function serviceLabel(spec: DesignSpec): string {
   return `Extensions, ${tip}${spec.length !== undefined ? `, ${lengthLabel(spec.length).toLowerCase()}` : ""}`;
 }
 
+/** 115 → "1 h 55 min". */
+export function durationLabel(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h === 0 ? `${m} min` : m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
 export const money = (amount: number, currency: string) => `${amount.toLocaleString("fr-MA")} ${currency}`;
 
 /** The pre-filled WhatsApp text: what to ask the salon for, then the recipe link. */

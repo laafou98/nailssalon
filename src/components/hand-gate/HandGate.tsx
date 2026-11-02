@@ -1,6 +1,7 @@
 "use client";
 
 import type { HandLandmarker } from "@mediapipe/tasks-vision";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type CheckResult,
@@ -11,6 +12,8 @@ import {
   type HandPose,
 } from "@/lib/hand-gate/checks";
 import { type GatedPhoto, analyze, loadLandmarker, normalisePhoto } from "@/lib/hand-gate/browser";
+import Icon from "@/components/ui/Icon";
+import StepNav from "@/components/ui/StepNav";
 import TiltGuide from "./TiltGuide";
 
 type Phase = "idle" | "loading" | "live" | "checking" | "rejected" | "accepted" | "error";
@@ -44,7 +47,14 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     streamRef.current = null;
   }, []);
 
-  useEffect(() => stopCamera, [stopCamera]);
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false;
+    return () => {
+      unmounted.current = true;
+      stopCamera();
+    };
+  }, [stopCamera]);
 
   // Release object URLs when photos are replaced.
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
@@ -74,11 +84,13 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     const result = await normalisePhoto(still, analysis);
     setPhoto(result);
     setPhase("accepted");
-    onAccept?.(result);
-  }, [onAccept]);
+  }, []);
 
   const startCamera = async () => {
     setError(null);
+    setReport(null);
+    setHoldProgress(0);
+    setPose(null);
     setPhase("loading");
     try {
       const [landmarker, stream] = await Promise.all([
@@ -88,6 +100,10 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
           audio: false,
         }),
       ]);
+      if (unmounted.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
       const settings = stream.getVideoTracks()[0]?.getSettings();
       // Laptops report no facingMode; their webcams face the user.
@@ -204,158 +220,236 @@ export default function HandGate({ onAccept }: { onAccept?: (photo: GatedPhoto) 
     }
   };
 
-  const reset = () => {
-    stopCamera();
-    setPhoto(null);
-    setRejectedUrl(null);
-    setReport(null);
-    setHoldProgress(0);
-    setPose(null);
-    setPhase("idle");
-  };
+  // The flow opens on the camera. The ref keeps React's dev double-mount from asking twice.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    startCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, []);
 
   const live = phase === "live";
+  const onCamera = phase === "idle" || phase === "loading" || phase === "live" || phase === "checking";
+  const close = <Link href="/" className="n-ib" aria-label="Close"><Icon name="xmark" /></Link>;
 
   return (
-    <div className="flex w-full max-w-xl flex-col gap-4">
+    <>
       <input
         ref={fileRef}
         type="file"
         accept="image/jpeg,image/png,image/webp,image/heic"
-        className="hidden"
+        className="n-sr"
+        tabIndex={-1}
+        aria-label="Upload a photo of your hand"
         onChange={(e) => onFile(e.target.files?.[0])}
       />
 
       {/* Camera view stays mounted so the <video> ref exists before the stream starts. */}
-      <div
-        className={`relative mx-auto overflow-hidden rounded-2xl bg-zinc-900 ${
-          phase === "loading" ? "h-64 w-full" : live ? "w-fit max-w-full" : "hidden"
-        }`}
-      >
-        <video
-          ref={videoRef}
-          playsInline
-          muted
-          // Capped height so a portrait phone camera fits on screen with the controls.
-          className="block max-h-[70vh] max-w-full"
-          style={{ transform: mirrored ? "scaleX(-1)" : undefined }}
-        />
-        <canvas
-          ref={overlayRef}
-          className="pointer-events-none absolute inset-0 h-full w-full"
-          style={{ transform: mirrored ? "scaleX(-1)" : undefined }}
-        />
-        {phase === "loading" && (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-zinc-300">
-            Loading hand detector…
+      <div className="n-cam n-push-in" hidden={!onCamera}>
+        <div className="n-view">
+          <video ref={videoRef} playsInline muted style={{ transform: mirrored ? "scaleX(-1)" : undefined }} />
+          <canvas ref={overlayRef} style={{ transform: mirrored ? "scaleX(-1)" : undefined }} />
+        </div>
+        <div className="n-nav">
+          {close}
+          <div className="n-prog n-prog-dim" aria-hidden>
+            <i className="now" />
+            <i />
+            <i />
           </div>
-        )}
-        {live && report && (
-          <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/70 to-transparent p-4">
-            <p className={`text-lg font-medium ${report.ok ? "text-emerald-300" : "text-white"}`}>{report.headline}</p>
-          </div>
-        )}
-        {live && pose && (
-          <div className="absolute right-3 top-16">
+          <span className="n-eye" style={{ opacity: 0.8 }}>1/3</span>
+        </div>
+        <div className="n-pill" key={report?.ok ? "ok" : "not-ok"} aria-live="polite">
+          <Icon name={report?.ok ? "checkmark-alt" : "hand-raised"} />
+          {phase === "checking" ? "Checking photo…" : live && report ? report.headline : phase === "live" ? "Lay your hand flat, fingers apart" : "Loading hand detector…"}
+        </div>
+        <div className="n-guide" aria-hidden>
+          <b />
+          <b />
+          <b />
+          <b />
+        </div>
+        {live && pose && pose.status !== "pass" && (
+          <div className="n-tilt">
             <TiltGuide pose={pose} mirrored={mirrored} />
           </div>
         )}
-        {live && holdProgress > 0 && (
-          <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/20">
-            <div className="h-full bg-emerald-400 transition-[width]" style={{ width: `${holdProgress * 100}%` }} />
+        {live && (
+          <div className="n-status">
+            <span className="n-dot" />
+            {holdProgress > 0 ? "Hold still…" : report?.ok ? "Almost there…" : "Looking for your hand…"}
           </div>
         )}
+        <div className="n-dock">
+          <div className="n-dock-row">
+            <button className="n-up" onClick={() => fileRef.current?.click()} aria-label="Upload a photo">
+              <Icon name="photo" size={24} />
+            </button>
+            <button className="n-shutter" onClick={captureNow} disabled={!live || !report?.ok} aria-label="Take photo">
+              <svg viewBox="0 0 84 84">
+                <circle cx="42" cy="42" r="40" fill="none" stroke="rgba(255,255,255,.25)" strokeWidth="4" />
+                <circle
+                  cx="42"
+                  cy="42"
+                  r="40"
+                  fill="none"
+                  stroke="#FF4512"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  transform="rotate(-90 42 42)"
+                  strokeDasharray="251.3"
+                  strokeDashoffset={251.3 * (1 - holdProgress)}
+                />
+              </svg>
+              <i />
+            </button>
+            <span style={{ width: 52 }} />
+          </div>
+          <p className="n-hint">Takes the photo by itself when you&apos;re steady</p>
+        </div>
       </div>
 
-      {phase === "idle" && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200 p-6 dark:border-zinc-800">
-          <h2 className="text-xl font-semibold">Photograph your hand</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Back of one hand, bare nails, fingers slightly apart, in good light. We check the photo on your
-            device before anything is sent, so a bad photo never costs a render.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={startCamera}
-              className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900"
-            >
-              Use camera
+      {phase === "rejected" && rejectedUrl && report && (
+        <div className="n-scr">
+          <StepNav step={1} fill={40} onBack={startCamera} label="Back to the camera" />
+          <Rejected report={report} url={rejectedUrl} />
+          <CheckDetails checks={report.checks} />
+          <div className="n-cta">
+            <button className="n-btn n-btn-k" onClick={startCamera}>
+              <Icon name="arrow-counterclockwise" size={20} />
+              Retake
             </button>
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-            >
-              Upload a photo
+            <button className="n-btn n-btn-ghost" onClick={() => fileRef.current?.click()}>
+              Upload a different photo
             </button>
           </div>
         </div>
       )}
 
-      {live && (
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-zinc-500">Takes the photo by itself once your hand is flat and everything is green.</p>
-          <div className="flex gap-2">
-            <button onClick={reset} className="rounded-full border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700">
-              Cancel
-            </button>
-            <button
-              onClick={captureNow}
-              disabled={!report?.ok}
-              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
-            >
-              Take photo
+      {phase === "accepted" && photo && report && (
+        <div className="n-scr">
+          <StepNav step={1} fill={100} onBack={startCamera} />
+          <div className="n-head">
+            <p className="n-eye">Step 1 · Your hand</p>
+            <h1 className="n-d n-h1">Looking good.</h1>
+          </div>
+          <div className="n-photo n-sticker">
+            {/* eslint-disable-next-line @next/next/no-img-element -- local blob URL */}
+            <img src={photo.url} alt="Your hand photo, cropped and ready" />
+            <button className="n-retake" onClick={startCamera}>
+              <Icon name="arrow-counterclockwise" size={16} />
+              Retake
             </button>
           </div>
-        </div>
-      )}
-
-      {phase === "checking" && <p className="text-sm text-zinc-500">Checking photo…</p>}
-
-      {phase === "rejected" && rejectedUrl && (
-        <div className="flex flex-col gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element -- local data URL */}
-          <img src={rejectedUrl} alt="Your photo, with the detected hand outlined" className="w-full rounded-2xl" />
-          <p className="text-lg font-medium">{report?.headline}</p>
-        </div>
-      )}
-
-      {phase === "accepted" && photo && (
-        <div className="flex flex-col gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element -- local blob URL */}
-          <img src={photo.url} alt="Your hand photo, cropped and ready" className="w-full rounded-2xl" />
-          <p className="text-lg font-medium text-emerald-600 dark:text-emerald-400">Photo ready for try-on</p>
-          <p className="text-xs text-zinc-500">
-            {photo.width}×{photo.height} JPEG {captureInfo} · {Math.round(photo.blob.size / 1024)} KB · 21 landmarks saved
-          </p>
+          <div className="n-checks">
+            {READY_CHIPS.map(({ id, label }) => {
+              const check = report.checks.find((c) => c.id === id);
+              const warn = check?.status === "warn";
+              return (
+                <div key={id} className={`n-chip ${warn ? "warn" : ""}`} title={check?.message}>
+                  <span>{warn ? <b style={{ font: "700 12px var(--mono)" }}>!</b> : <Icon name="checkmark-alt" size={12} />}</span>
+                  {label}
+                </div>
+              );
+            })}
+          </div>
+          <CheckDetails
+            checks={report.checks}
+            caption={`${photo.width}×${photo.height} JPEG ${captureInfo} · ${Math.round(photo.blob.size / 1024)} KB · 21 landmarks saved`}
+            action={<button className="n-link" onClick={() => fileRef.current?.click()}>Upload instead</button>}
+          />
+          <div className="n-cta">
+            <button className="n-btn n-btn-k" onClick={() => onAccept?.(photo)}>
+              Continue
+              <Icon name="arrow-right" size={20} />
+            </button>
+          </div>
         </div>
       )}
 
       {phase === "error" && (
-        <div className="rounded-2xl border border-red-300 p-4 text-sm text-red-700 dark:border-red-900 dark:text-red-400">
-          {describeError(error)}
+        <div className="n-scr">
+          <div className="n-nav">{close}</div>
+          <div className="n-fail">
+            <div className="n-alert-art white">
+              {/* eslint-disable-next-line @next/next/no-img-element -- static SVG illustration */}
+              <img src="/v2/oops.svg" alt="The polish bottle mascot tipped over" />
+            </div>
+            <h1 className="n-d n-alert-title">{/permission|notallowed/i.test(error ?? "") ? "Camera's blocked." : "That didn't work."}</h1>
+            <p className="n-body">{describeError(error)}</p>
+          </div>
+          <div className="n-cta">
+            <button className="n-btn n-btn-k" onClick={() => fileRef.current?.click()}>
+              <Icon name="photo" size={20} />
+              Upload a photo
+            </button>
+            <button className="n-btn n-btn-ghost" onClick={startCamera}>
+              Try the camera again
+            </button>
+          </div>
         </div>
       )}
+    </>
+  );
+}
 
-      {/* While live, the headline and 3D guide say what to do; the full list is for the result. */}
-      {report && (phase === "rejected" || phase === "accepted") && <CheckList checks={report.checks} />}
+/** The chips on Hand ready, each backed by a real check. */
+const READY_CHIPS: { id: CheckResult["id"]; label: string }[] = [
+  { id: "pose", label: "Flat" },
+  { id: "sharpness", label: "Sharp" },
+  { id: "fingertips", label: "All 5 nails" },
+];
 
-      {(phase === "rejected" || phase === "accepted" || phase === "error") && (
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={startCamera}
-            className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-zinc-900"
-          >
-            {phase === "accepted" ? "Retake with camera" : "Try the camera again"}
-          </button>
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-medium dark:border-zinc-700"
-          >
-            Upload a different photo
-          </button>
-        </div>
-      )}
-    </div>
+/** One plain sentence and one way forward, over the photo with the hand outlined. */
+function Rejected({ report, url }: { report: GateReport; url: string }) {
+  const failed = (id: CheckResult["id"]) => report.checks.some((c) => c.id === id && c.status === "fail");
+  const palm = report.pose?.facing === "palm" || failed("orientation");
+  const tilted = !palm && failed("pose");
+  const eyebrow = palm ? "Camera · Palm facing" : tilted ? "Camera · Hand tilted" : "Camera · Not quite";
+  const title = palm ? "That's your palm." : tilted ? "Hand's on a tilt." : "Not quite yet.";
+  const body = palm ? "We need the back of your hand to see your nails." : tilted ? "Lay it flat on a table and try again." : report.headline;
+  const pill = palm ? "Turn your hand over" : tilted ? report.headline.replace(/^.*?: /, "").replace(/^./, (c) => c.toUpperCase()) : null;
+  return (
+    <>
+      <div className="n-head">
+        <p className="n-eye">{eyebrow}</p>
+        <h1 className="n-d n-h1 n-h1-sm">{title}</h1>
+        <p className="n-body" style={{ marginTop: 10 }}>{body}</p>
+      </div>
+      <div className="n-photo n-sticker" style={{ height: "clamp(220px, calc(100dvh - 450px), 400px)" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- local data URL */}
+        <img src={url} alt="Your photo, with the detected hand outlined" />
+        {pill && <span className="n-pill" style={{ top: 14, position: "absolute", boxShadow: "0 3px 0 var(--r)" }}>{pill}</span>}
+        {(palm || tilted) && (
+          <span style={{ position: "absolute", right: 12, bottom: 12, display: "grid", placeItems: "center", width: 84, height: 72, borderRadius: 16, background: "var(--k)" }} aria-hidden>
+            {palm ? <FlipArt /> : <TiltArt />}
+          </span>
+        )}
+      </div>
+    </>
+  );
+}
+
+function FlipArt() {
+  return (
+    <svg width="74" height="60" viewBox="0 0 110 90" className="n-wob">
+      <rect x="35" y="14" width="40" height="64" rx="18" fill="#fff" stroke="#141210" strokeWidth="3" />
+      <path d="M45 34h20M45 44h14" stroke="#141210" strokeWidth="3" strokeLinecap="round" />
+      <path d="M14 46 A42 42 0 0 1 96 46" fill="none" stroke="#FF4512" strokeWidth="5" strokeLinecap="round" />
+      <path d="M90 36 l7 11 l-12 2" fill="none" stroke="#FF4512" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TiltArt() {
+  return (
+    <svg width="74" height="60" viewBox="0 0 110 90" className="n-wob">
+      <path d="M40 16 L66 10 L66 80 L40 84Z" fill="#fff" stroke="#141210" strokeWidth="3" strokeLinejoin="round" />
+      <path d="M66 10 L76 16 L76 76 L66 80" fill="none" stroke="#fff" strokeWidth="3" strokeDasharray="5 5" />
+      <path d="M84 28 A30 30 0 0 1 84 64" fill="none" stroke="#FF4512" strokeWidth="5" strokeLinecap="round" />
+      <path d="M76 60 l8 6 l4 -10" fill="none" stroke="#FF4512" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -407,24 +501,27 @@ async function raiseResolution(stream: MediaStream | null, video: HTMLVideoEleme
 }
 
 const ICON: Record<CheckResult["status"], string> = { pass: "✓", warn: "!", fail: "✕" };
-const TONE: Record<CheckResult["status"], string> = {
-  pass: "text-emerald-600 dark:text-emerald-400",
-  warn: "text-amber-600 dark:text-amber-400",
-  fail: "text-red-600 dark:text-red-400",
-};
 
-function CheckList({ checks }: { checks: CheckResult[] }) {
+/** The full list of checks, one tap away. */
+function CheckDetails({ checks, caption, action }: { checks: CheckResult[]; caption?: string; action?: React.ReactNode }) {
+  const issues = checks.filter((c) => c.status !== "pass").length;
   return (
-    <ul className="grid gap-1.5 text-sm sm:grid-cols-2">
-      {checks.map((c) => (
-        <li key={c.id} className="flex items-start gap-2">
-          <span className={`w-4 shrink-0 text-center font-bold ${TONE[c.status]}`} aria-label={c.status}>
-            {ICON[c.status]}
-          </span>
-          <span>{c.message}</span>
-        </li>
-      ))}
-    </ul>
+    <details className="n-details">
+      <summary>
+        {issues > 0 ? `All checks · ${issues} to look at` : "All checks passed"}
+        <Icon name="chevron-right" size={12} />
+        <span style={{ marginLeft: "auto" }} onClick={(e) => e.preventDefault()}>{action}</span>
+      </summary>
+      <ul>
+        {checks.map((c) => (
+          <li key={c.id} className={c.status}>
+            <b aria-label={c.status}>{ICON[c.status]}</b>
+            <span>{c.message}</span>
+          </li>
+        ))}
+      </ul>
+      {caption && <p className="n-cap">{caption}</p>}
+    </details>
   );
 }
 
@@ -433,7 +530,7 @@ type Tone = "good" | "almost" | "bad";
 const toneOf = (report: GateReport): Tone =>
   report.autoCapture ? "good" : report.ok && report.pose?.status !== "fail" ? "almost" : "bad";
 
-const TONE_RGB: Record<Tone, string> = { good: "52, 211, 153", almost: "252, 211, 77", bad: "244, 114, 182" };
+const TONE_RGB: Record<Tone, string> = { good: "255, 69, 18", almost: "255, 194, 26", bad: "255, 255, 255" };
 
 /** Palm outline: wrist, thumb base and the four knuckles. */
 const PALM = [0, 1, 5, 9, 13, 17];

@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import Icon from "@/components/ui/Icon";
+import Sheet from "@/components/ui/Sheet";
+import StepNav from "@/components/ui/StepNav";
 import { type LoadedInspiration, loadInspiration, looksLikeOwnHand, nailDesignPng, pickDetail, toJpeg } from "@/lib/inspo/browser";
 import {
   DEFAULT_LENGTH,
@@ -22,6 +25,8 @@ import {
   withDesigns,
 } from "@/lib/inspo/pick";
 import { smoothOutline } from "@/lib/inspo/contour";
+import { lengthLabel } from "@/lib/recipe/format";
+import { go } from "@/lib/transition";
 import type { CutoutDetail } from "@/lib/inspo/design";
 import type { Point } from "@/lib/inspo/region";
 import { nailPromptBox } from "@/lib/inspo/sam";
@@ -40,15 +45,6 @@ import { type DesignReading, applyReading, needsArtwork } from "@/lib/vision/rea
  */
 
 const LABELS = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
-/** Outline colour per finger, readable on light and dark photos. */
-const OUTLINE: [number, number, number][] = [
-  [255, 64, 129],
-  [0, 176, 255],
-  [255, 214, 0],
-  [118, 255, 3],
-  [213, 0, 249],
-];
-
 /** An error as a short reason for the status line (no stack, no secrets). */
 const describe = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 160);
 
@@ -105,6 +101,15 @@ function detailNote(d: CutoutDetail | null): string | null {
 }
 
 const TIP_LABELS: Record<TipShape, string> = { almond: "Almond", stiletto: "Stiletto", oval: "Oval", square: "Square", squoval: "Squoval" };
+
+/** The tip shapes on the Length & shape sheet. */
+const TIP_PATHS: Record<TipShape, string> = {
+  almond: "M20 2 C32 10 36 26 36 40 V58 H4 V40 C4 26 8 10 20 2Z",
+  stiletto: "M20 1 C26 14 34 30 34 42 V58 H6 V42 C6 30 14 14 20 1Z",
+  oval: "M4 22 C4 10 12 4 20 4 C28 4 36 10 36 22 V58 H4Z",
+  square: "M4 9 Q4 4 9 4 H31 Q36 4 36 9 V58 H4Z",
+  squoval: "M4 15 Q4 4 15 4 H25 Q36 4 36 15 V58 H4Z",
+};
 
 const TEXTURE_LABELS: Record<Texture, string> = {
   matte: "Matte",
@@ -178,11 +183,16 @@ export default function InspoPicker({
   onTryOn,
   onNewPhoto,
   busy,
+  onBack,
+  compareRef,
 }: {
   onTryOn: (spec: DesignSpec, engine: EngineChoice) => void;
   /** A different inspiration photo was chosen: the last render's design (and its quote and recipe) no longer applies. */
   onNewPhoto?: () => void;
   busy: boolean;
+  onBack: () => void;
+  /** Filled with "render this with Nail Transfer", for the Result screen's compare link. */
+  compareRef: RefObject<(() => void) | null>;
 }) {
   const [loaded, setLoaded] = useState<LoadedInspiration | null>(null);
   const [loading, setLoading] = useState(false);
@@ -231,6 +241,15 @@ export default function InspoPicker({
     tapsRef.current = taps;
   }, [taps]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  /** Screen 08: tapping nails on the dark screen, instead of checking them. */
+  const [fixing, setFixing] = useState(false);
+  const [sheet, setSheet] = useState<"length" | "finish" | null>(null);
+  const [approxOpen, setApproxOpen] = useState(false);
+  /** Where automatic detection put each nail, so the Fix screen's ripple can point at the next one. */
+  const [located, setLocated] = useState<(Point | null)[]>([]);
+  const [ripple, setRipple] = useState<(Point & { n: number }) | null>(null);
+  const [notNailsOff, setNotNailsOff] = useState<string | null>(null);
+  const [finderAlertOff, setFinderAlertOff] = useState(false);
 
   const picks = useMemo(() => (loaded ? pickAll(loaded.image, taps) : []), [loaded, taps]);
   const allPicks = useMemo(() => [...picks, ...Array(FINGERS.length - picks.length).fill(null)] as (NailPick | null)[], [picks]);
@@ -275,6 +294,7 @@ export default function InspoPicker({
         const from = tapsRef.current.length;
         const pending = FINGERS.map((_, i) => i).filter((i) => i >= from);
         const tapFor = (i: number) => (hand[i] ? { x: Math.round(hand[i]!.x * loaded.width), y: Math.round(hand[i]!.y * loaded.height) } : null);
+        setLocated(FINGERS.map((_, i) => tapFor(i)));
         // Fully visible nails are outlined first: they set the typical nail size that guides the partial ones (an edge-on thumb).
         const order = [...pending.filter((i) => hand[i]?.visible === "full"), ...pending.filter((i) => hand[i] && hand[i]!.visible !== "full")];
         const done: (Point | null)[] = [...tapsRef.current];
@@ -398,34 +418,21 @@ export default function InspoPicker({
     const ctx = canvas.getContext("2d")!;
     ctx.scale(S, S);
     ctx.lineJoin = "round";
-    picks.forEach((pick, finger) => {
+    picks.forEach((pick) => {
       if (!pick) return;
-      const [r, g, b] = OUTLINE[finger];
       const outline = smoothOutline(pick.region.mask, w, h);
       if (outline.length < 3) return;
       ctx.beginPath();
       outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
       ctx.closePath();
-      ctx.fillStyle = `rgba(${r},${g},${b},0.24)`;
+      ctx.fillStyle = "rgba(255,69,18,0.16)";
       ctx.fill();
-      ctx.lineWidth = 0.9;
-      ctx.strokeStyle = `rgb(${r},${g},${b})`;
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
       ctx.stroke();
-    });
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    picks.forEach((pick, finger) => {
-      if (!pick) return;
-      const label = LABELS[finger];
-      const { cx, cy } = pick.region.box;
-      const tw = ctx.measureText(label).width + 10;
-      ctx.fillStyle = "rgba(0,0,0,0.65)";
-      ctx.beginPath();
-      ctx.roundRect(cx - tw / 2, cy - 9, tw, 18, 9);
-      ctx.fill();
-      ctx.fillStyle = `rgb(${OUTLINE[finger].join(",")})`;
-      ctx.fillText(label, cx, cy + 1);
+      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = "#FF4512";
+      ctx.stroke();
     });
   }, [loaded, picks]);
 
@@ -443,6 +450,12 @@ export default function InspoPicker({
       setSamError(null);
       setFinding({ status: "idle" });
       setSwapFrom(null);
+      setFixing(false);
+      setSheet(null);
+      setLocated([]);
+      setRipple(null);
+      setFinderAlertOff(false);
+      setNotNailsOff(null);
       // Encoding starts now, so the model is ready by the first tap.
       encodeForSam(next).then(
         () => fileRef.current === file && setSam("ready"),
@@ -490,6 +503,7 @@ export default function InspoPicker({
       x: Math.round(((e.clientX - rect.left) / rect.width) * loaded.width),
       y: Math.round(((e.clientY - rect.top) / rect.height) * loaded.height),
     };
+    setRipple({ ...t, n: e.timeStamp });
     const outlines = outlinesFor(loaded.image);
     if (sam !== "failed" && !outlines.has(tapKey(t))) {
       setOutlining(true);
@@ -510,6 +524,11 @@ export default function InspoPicker({
   const undo = () => {
     setRedo([taps[taps.length - 1], ...redo]);
     setTaps(taps.slice(0, -1));
+  };
+  /** Goes back to a finger on the Fix screen; the fingers after it can be redone or retapped. */
+  const undoTo = (i: number) => {
+    setRedo([...taps.slice(i), ...redo]);
+    setTaps(taps.slice(0, i));
   };
   const redoTap = () => {
     setTaps([...taps, redo[0]]);
@@ -551,105 +570,236 @@ export default function InspoPicker({
     }
   };
 
+  useEffect(() => {
+    compareRef.current = () => render("nail_transfer");
+  });
+
   const failed = taps.length > 0 && taps[taps.length - 1] !== null && picks[taps.length - 1] === null;
   /** Fingers whose outline came from the colour flood because MobileSAM had no nail-sized guess (or failed) for that tap. */
   const flooded = loaded
     ? taps.flatMap((t, i) => (t && picks[i] && !outlinesFor(loaded.image).get(tapKey(t)) ? [LABELS[i].toLowerCase()] : []))
     : [];
+  const pickedCount = picks.filter(Boolean).length;
+  const looking = finding.status === "finding" || (finding.status === "idle" && !error && taps.length === 0);
+  const notNails = read !== null && !read.isNailDesign && notNailsOff !== readingKey;
+  const finderFailed = finding.status === "failed" && taps.length === 0 && !finderAlertOff && !fixing;
+  const lengthSummary = extensions ? `${TIP_LABELS[shape]} · ${lengthLabel(nailLength)}` : "My own nails";
+  const edited = editing !== null ? FINGERS[editing] : null;
+  const editedFinger = edited && spec ? spec.fingers[edited] : null;
+  const editedFrom = editing !== null ? sources[editing] : null;
+  const editedPreview = editing !== null && useDesign[editing] && editedFrom !== null ? previews[editedFrom] : null;
+
+  const fileInput = (
+    <input
+      id="inspo-file"
+      type="file"
+      accept="image/*"
+      className="n-sr"
+      tabIndex={-1}
+      data-testid="inspo-file"
+      onChange={(e) => {
+        choose(e.target.files?.[0]);
+        e.target.value = "";
+      }}
+    />
+  );
+
+  if (!loaded) {
+    return (
+      <div className="n-scr">
+        {fileInput}
+        <StepNav step={2} fill={30} onBack={onBack} />
+        <div className="n-head">
+          <p className="n-eye">Step 2 · Nail photo</p>
+          <h1 className="n-d n-h1">
+            Add your
+            <br />
+            inspiration.
+          </h1>
+        </div>
+        <label
+          htmlFor="inspo-file"
+          className="n-drop"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            choose(e.dataTransfer.files[0]);
+          }}
+        >
+          <svg className="n-ants" viewBox="0 0 342 430" preserveAspectRatio="none" aria-hidden>
+            <rect x="1.5" y="1.5" width="339" height="427" rx="27" fill="none" stroke="#C9C0B8" strokeWidth="2.5" strokeDasharray="12 12" vectorEffect="non-scaling-stroke" />
+          </svg>
+          {/* eslint-disable-next-line @next/next/no-img-element -- static SVG illustration */}
+          <img src="/v2/photos.svg" alt="Two instant photos, one with a nail design" />
+          <h2 className="n-d">Drop in any nail photo</h2>
+          <p>Camera roll, screenshot or saved post</p>
+        </label>
+        <div className="n-tip">
+          <Icon name="info-circle" />
+          Close-ups of one hand work best.
+        </div>
+        {error && <p className="n-note n-note-err">{error}</p>}
+        <div className="n-cta">
+          <label htmlFor="inspo-file" className="n-btn n-btn-k">
+            <Icon name="photo" size={20} />
+            {loading ? "Opening…" : "Choose a photo"}
+          </label>
+        </div>
+      </div>
+    );
+  }
+
+  const fingerStatus = (i: number) => (i < taps.length ? (taps[i] ? "ok" : "skip") : i === taps.length ? "now" : "");
 
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex cursor-pointer items-center justify-center rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-700">
-        {loading ? "Opening…" : loaded ? "Choose a different photo" : "Choose the nail design you want"}
-        <input
-          type="file"
-          accept="image/*"
-          className="sr-only"
-          data-testid="inspo-file"
-          onChange={(e) => choose(e.target.files?.[0])}
-        />
-      </label>
-      {!loaded && <p className="text-xs text-zinc-500">A photo or screenshot of the nails you&apos;d like, e.g. from Pinterest or Instagram.</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {ownHand && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-sm" role="alert">
-          <p className="flex-1">
-            This looks like a photo of your own hand, not the nail design you want. Your phone may have offered your latest photo or screenshot first: choose the inspiration picture instead.
-          </p>
-          <button onClick={() => setOwnHand(false)} className="shrink-0 text-xs underline">
-            It&apos;s right
+    <div className={`n-scr ${fixing ? "n-scr-dark" : ""}`}>
+      {fileInput}
+      {fixing ? (
+        <div className="n-nav n-nav-between">
+          <button className="n-ib" onClick={() => go("pop", () => setFixing(false))} aria-label="Close">
+            <Icon name="xmark" />
           </button>
+          <div className="n-dots">
+            {FINGERS.map((finger, i) => (
+              <button key={finger} className={fingerStatus(i)} onClick={() => i < taps.length && undoTo(i)} aria-label={`Redo from the ${LABELS[i].toLowerCase()} nail`} disabled={i >= taps.length || outlining}>
+                {LABELS[i][0]}
+              </button>
+            ))}
+          </div>
+          <span style={{ width: 40 }} />
+        </div>
+      ) : (
+        <StepNav step={2} fill={75} onBack={onBack} />
+      )}
+      {fixing ? (
+        <div className="n-head">
+          <p className="n-eye">Fix nails · {Math.min(taps.length, 5)} of 5</p>
+          <h1 className="n-d n-h1" style={{ fontSize: 46 }} aria-live="polite">
+            {done ? (
+              "All five picked."
+            ) : (
+              <>
+                Tap the <em>{LABELS[taps.length].toLowerCase()}</em> nail.
+              </>
+            )}
+          </h1>
+        </div>
+      ) : (
+        <div className="n-head">
+          <p className="n-eye">Step 2 · Check</p>
+          <h1 className="n-d n-h1 n-h1-sm">Every nail, read.</h1>
         </div>
       )}
 
-      {loaded && (
+      <div className={`n-insp ${fixing ? "n-insp-fix" : ""}`} style={{ "--ar": loaded.width / loaded.height } as React.CSSProperties}>
+        <div className="n-insp-clip">
+          {/* eslint-disable-next-line @next/next/no-img-element -- local blob URL */}
+          <img src={loaded.url} alt="Your inspiration photo" draggable={false} />
+          <canvas
+            ref={canvasRef}
+            onPointerUp={fixing ? tap : undefined}
+            style={{ pointerEvents: fixing ? undefined : "none", cursor: fixing && !done ? "crosshair" : "default" }}
+            aria-label="Tap the nails in finger order"
+          />
+        </div>
+        {picks.map((pick, i) => {
+          if (!pick) return null;
+          const at = { left: `${(pick.region.box.cx / loaded.width) * 100}%`, top: `${(pick.region.box.cy / loaded.height) * 100}%` };
+          return fixing ? (
+            <div key={`${i}-${taps[i]?.x}-${taps[i]?.y}`} className="n-fm" style={at} aria-hidden>{LABELS[i][0]}</div>
+          ) : (
+            <div key={`${i}-${taps[i]?.x}-${taps[i]?.y}`} className="n-m" style={{ ...at, animationDelay: `${i * 0.08}s` }} aria-hidden>
+              <b>{LABELS[i][0]}</b>
+            </div>
+          );
+        })}
+        {fixing && !done && !outlining && (
+          <div
+            className="n-tap"
+            aria-hidden
+            style={{
+              left: `${((located[taps.length]?.x ?? loaded.width / 2) / loaded.width) * 100}%`,
+              top: `${((located[taps.length]?.y ?? loaded.height / 2) / loaded.height) * 100}%`,
+            }}
+          />
+        )}
+        {fixing && ripple && <div key={ripple.n} className="n-tap once" aria-hidden style={{ left: `${(ripple.x / loaded.width) * 100}%`, top: `${(ripple.y / loaded.height) * 100}%` }} />}
+        {!fixing && (
+          <label htmlFor="inspo-file" className="n-retake">
+            <Icon name="arrow-counterclockwise" size={16} />
+            {loading ? "Opening…" : "New photo"}
+          </label>
+        )}
+      </div>
+
+      {error && <p className="n-note n-note-err">{error}</p>}
+
+      {fixing ? (
         <>
-          <p className="text-sm font-medium" aria-live="polite">
-            {done
-              ? "All five picked. Check the colours, then try it on."
-              : `Tap your ${LABELS[taps.length].toLowerCase()} nail${taps.length === 0 ? " (then index, middle, ring, pinky)" : ""}`}
-          </p>
-          <div className="relative overflow-hidden rounded-2xl bg-zinc-900">
-            {/* eslint-disable-next-line @next/next/no-img-element -- local blob URL */}
-            <img src={loaded.url} alt="Your inspiration photo" className="block w-full select-none" draggable={false} />
-            <canvas
-              ref={canvasRef}
-              onPointerUp={tap}
-              className="absolute inset-0 h-full w-full touch-manipulation"
-              style={{ cursor: done ? "default" : "crosshair" }}
-              aria-label="Tap the nails in finger order"
-            />
+          {outlining && <p className="n-note" aria-live="polite">{sam === "loading" ? "Getting the nail outliner ready…" : "Outlining…"}</p>}
+          {failed && <p className="n-note">Couldn&apos;t outline a nail there. Undo and tap nearer the middle of the nail.</p>}
+          {!done && !outlining && !failed && <p className="n-note">Only some nails visible? Tap &quot;Not in photo&quot;, or tap the same nail again to reuse it.</p>}
+          <OutlinerNote sam={sam} samError={samError} flooded={flooded} picked={pickedCount > 0} />
+          <div className="n-fixbar">
+            <button className="n-tb" onClick={undo} disabled={taps.length === 0 || outlining} aria-label="Undo">
+              <Icon name="arrow-uturn-left" />
+              <span className="n-tb-label">Undo</span>
+            </button>
+            <button className="n-tb" onClick={redoTap} disabled={redo.length === 0} aria-label="Redo">
+              <Icon name="arrow-uturn-right" />
+            </button>
+            <button className="n-tb" onClick={() => add(null)} disabled={done || outlining}>
+              Not in photo
+            </button>
+            <button className={`n-tb n-tb-grow ${done ? "n-tb-done" : "n-tb-off"}`} onClick={() => go("pop", () => setFixing(false))}>
+              Done
+            </button>
           </div>
-          {finding.status === "finding" && <p className="text-sm text-zinc-500" aria-live="polite" data-testid="finding">Finding the nails in the photo… (you can also tap them)</p>}
-          {finding.status === "done" && (
-            <p className="text-sm text-zinc-500" data-testid="finding">
-              {finding.count === FINGERS.length ? "All five nails found automatically." : `${finding.count} nails found automatically.`} Check the labels: Undo to retap one, or swap two fingers below.
-            </p>
+        </>
+      ) : (
+        <>
+          <div className="n-found" data-testid="finding" aria-live="polite">
+            <span>
+              {looking ? <span className="n-spin" /> : pickedCount > 0 && <i><Icon name="checkmark-alt" size={12} /></i>}
+              {looking
+                ? "Finding the nails…"
+                : pickedCount === FINGERS.length
+                  ? finding.status === "done" ? "All 5 nails found" : "All 5 nails picked"
+                  : `${pickedCount} of 5 nails found`}
+            </span>
+            <button className="n-link" onClick={() => go("up", () => setFixing(true))}>
+              {looking ? "Tap them" : "Fix"}
+            </button>
+          </div>
+
+          {swapFrom !== null && (
+            <div className="n-swapbar" role="status">
+              <span>Now tap the finger to swap {LABELS[swapFrom]} with.</span>
+              <button className="n-link" onClick={() => setSwapFrom(null)}>Cancel</button>
+            </div>
           )}
-          {finding.status === "failed" && <p className="text-sm text-zinc-500" data-testid="finding">Couldn&apos;t find the nails automatically ({finding.error}). Tap them instead.</p>}
-          {outlining && finding.status !== "finding" && <p className="text-sm text-zinc-500" aria-live="polite">{sam === "loading" ? "Getting the nail outliner ready…" : "Outlining…"}</p>}
-          {failed && <p className="text-sm text-amber-700">Couldn&apos;t outline a nail there. Undo and tap nearer the middle of the nail.</p>}
-          {sam === "failed" ? (
-            <p className="text-xs text-amber-700" data-testid="outliner-status">
-              The nail outliner (MobileSAM) couldn&apos;t run here{samError ? ` (${samError})` : ""}, so outlines come from the colour outliner and may be rough on nails that match the skin or background.
-            </p>
-          ) : flooded.length > 0 ? (
-            <p className="text-xs text-amber-700" data-testid="outliner-status">
-              MobileSAM found no nail-sized shape under the {flooded.join(", ")} tap{flooded.length > 1 ? "s" : ""}, so {flooded.length > 1 ? "those outlines come" : "that outline comes"} from the colour outliner and may be rough. Undo and tap the middle of the nail to retry.
-            </p>
-          ) : picks.some(Boolean) && sam === "ready" ? (
-            <p className="text-xs text-zinc-500" data-testid="outliner-status">Outlines by MobileSAM.</p>
-          ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => add(null)} disabled={done || outlining} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
-              Skip {done ? "" : LABELS[taps.length].toLowerCase()} (not visible)
-            </button>
-            <button onClick={undo} disabled={taps.length === 0 || outlining} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
-              Undo
-            </button>
-            <button onClick={redoTap} disabled={redo.length === 0} className="rounded-full border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-zinc-700">
-              Redo
-            </button>
-          </div>
-          <p className="text-xs text-zinc-500">Only some nails visible? Skip a finger, or tap the same nail again to reuse it.</p>
-
-          <ul className="grid grid-cols-5 gap-1" aria-label="Design per finger">
+          <ul className="n-strip" aria-label="Design per finger">
             {FINGERS.map((finger, i) => {
               const f = spec?.fingers[finger];
               const picked = Boolean(picks[i]);
               const from = sources[i];
               const preview = from !== null ? previews[from] : null;
               const showDesign = useDesign[i] && preview;
+              const note = !f ? "–" : !picked ? "copied" : detailNote(detail[i]) ?? (f.confidence < 0.6 ? "unsure" : "");
               return (
-                <li key={finger} className={`flex flex-col items-center gap-1 rounded-lg text-center ${swapFrom === i ? "bg-amber-500/20" : editing === i ? "bg-zinc-200 dark:bg-zinc-800" : ""}`} data-finger={finger} data-base={f?.baseHex} data-accents={f?.accentHexes.join(" ")} data-design={f ? String(useDesign[i]) : undefined} data-detail={detail[i] ? `${detail[i]!.ok ? "ok" : detail[i]!.reason} sharpness ${detail[i]!.sharpness}` : undefined}>
-                  <div
-                    className="relative flex h-14 items-center"
-                    role={f ? "button" : undefined}
-                    aria-label={!f ? undefined : swapFrom !== null ? `Swap with ${LABELS[i].toLowerCase()}` : `Edit the ${LABELS[i].toLowerCase()} nail`}
-                    aria-expanded={swapFrom === null && f ? editing === i : undefined}
+                <li key={finger} style={{ display: "contents" }}>
+                  <button
+                    className="n-t"
+                    disabled={!f}
+                    data-finger={finger}
+                    data-base={f?.baseHex}
+                    data-accents={f?.accentHexes.join(" ")}
+                    data-design={f ? String(useDesign[i]) : undefined}
+                    data-detail={detail[i] ? `${detail[i]!.ok ? "ok" : detail[i]!.reason} sharpness ${detail[i]!.sharpness}` : undefined}
+                    data-swap={swapFrom === i ? "from" : undefined}
+                    aria-label={!f ? LABELS[i] : swapFrom !== null ? `Swap with ${LABELS[i].toLowerCase()}` : `Edit the ${LABELS[i].toLowerCase()} nail`}
                     onClick={() => {
-                      if (!f) return;
                       if (swapFrom !== null) {
                         if (i < taps.length) {
                           swapFingers(swapFrom, i);
@@ -657,234 +807,367 @@ export default function InspoPicker({
                         }
                         return;
                       }
-                      setEditing(editing === i ? null : i);
+                      setEditing(i);
                     }}
                   >
-                    {showDesign ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- local blob URL
-                      <img src={preview} alt={`${LABELS[i]} nail design`} className={`h-14 w-7 rounded-full border object-cover ${picked ? "border-zinc-400" : "border-dashed border-zinc-400 opacity-60"}`} />
-                    ) : (
-                      <div
-                        className={`relative h-10 w-10 rounded-full border ${picked ? "border-zinc-400" : "border-dashed border-zinc-400 opacity-60"}`}
-                        style={{ backgroundColor: f?.baseHex ?? "transparent" }}
-                      >
-                        {f?.accentHexes.slice(0, 2).map((hex, k) => (
-                          <span key={k} className="absolute h-3.5 w-3.5 rounded-full border border-white/70" style={{ backgroundColor: hex, right: -2 - k * 8, bottom: -2 }} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-[11px] leading-tight">{LABELS[i]}</span>
-                  <span className="text-[10px] leading-tight text-zinc-500">
-                    {!f ? "–" : !picked ? "copied" : detailNote(detail[i]) ?? (f.confidence < 0.6 ? "unsure" : "")}
-                  </span>
-                  {f && <span className="text-[10px] leading-tight" data-texture={f.texture}>{TEXTURE_LABELS[f.texture]}</span>}
-                  {f && (
-                    <button
-                      onClick={() => setUseDesign(toggle(useDesign, i))}
-                      aria-pressed={useDesign[i]}
-                      className="rounded-full border border-zinc-300 px-2 py-0.5 text-[10px] dark:border-zinc-700"
-                    >
-                      {useDesign[i] ? "Design" : "Colour"}
-                    </button>
-                  )}
-                  {f && picked && useDesign[i] && (
-                    <button onClick={() => setFlipped(toggle(flipped, i))} className="text-[10px] text-zinc-500 underline" aria-label={`Turn the ${LABELS[i].toLowerCase()} design upside down`}>
-                      Flip
-                    </button>
-                  )}
+                    <i className={picked ? "" : "empty"} style={!showDesign && f ? { backgroundColor: f.baseHex } : undefined}>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- local blob URL */}
+                      {showDesign && <img src={preview} alt={`${LABELS[i]} nail design`} />}
+                    </i>
+                    <span>{LABELS[i]}</span>
+                    {f && <small data-texture={f.texture}>{TEXTURE_LABELS[f.texture]}</small>}
+                    <small className={note && note !== "copied" ? "warn" : ""}>{note}</small>
+                  </button>
                 </li>
               );
             })}
           </ul>
-          {editing !== null && spec && (
-            <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-3 text-xs dark:border-zinc-700" data-testid="finger-editor">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">{LABELS[editing]} nail</p>
-                <button onClick={() => setEditing(null)} className="underline">Done</button>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span>Colour</span>
-                <label className="flex h-8 items-center gap-2 rounded-full border border-zinc-300 px-2 dark:border-zinc-700">
-                  <input
-                    type="color"
-                    value={spec.fingers[FINGERS[editing]].baseHex}
-                    onChange={(e) => {
-                      const hex = e.target.value.toUpperCase();
-                      setEdits({ ...edits, [FINGERS[editing]]: { ...edits[FINGERS[editing]], baseHex: hex } });
-                      // The design cut-out would still show the photo's colour, so a recoloured nail renders as colour.
-                      setUseDesign(useDesign.map((v, k) => (k === editing ? false : v)));
-                    }}
-                    className="h-5 w-5"
-                    aria-label={`${LABELS[editing]} colour`}
-                  />
-                  {spec.fingers[FINGERS[editing]].baseHex}
-                </label>
-                {edits[FINGERS[editing]]?.baseHex && (
-                  <button onClick={() => setEdits({ ...edits, [FINGERS[editing]]: { ...edits[FINGERS[editing]], baseHex: undefined } })} className="underline">
-                    Back to the photo&apos;s colour
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-1">
-                <span className="mr-1">Finish</span>
-                {TEXTURES.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setEdits({ ...edits, [FINGERS[editing]]: { ...edits[FINGERS[editing]], texture: edits[FINGERS[editing]]?.texture === t ? undefined : t } })}
-                    aria-pressed={spec.fingers[FINGERS[editing]].texture === t}
-                    className={`rounded-full border px-2 py-0.5 ${spec.fingers[FINGERS[editing]].texture === t ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
-                  >
-                    {TEXTURE_LABELS[t]}
-                  </button>
-                ))}
-              </div>
+
+          {reading && (
+            <p className="n-note" aria-live="polite" data-reading={reading.status}>
+              {reading.status === "reading" && "Reading the finish and pattern…"}
+              {reading.status === "done" && reading.value.isNailDesign && (reading.value.summary || "Finish and pattern read.")}
+              {reading.status === "done" && !reading.value.isNailDesign && "This doesn't look like a nail design. Choose a photo that shows painted nails."}
+              {reading.status === "error" && (
+                <>
+                  Couldn&apos;t read the finish from the photo. Choose it below.
+                  <span className="n-cap" style={{ display: "block", marginTop: 4, overflowWrap: "anywhere" }} data-testid="reading-error">{reading.error}</span>
+                </>
+              )}
+            </p>
+          )}
+
+          <button className="n-cell" onClick={() => setSheet("length")}>
+            <span className="n-ic"><Icon name="hand-raised" size={16} /></span>
+            <b>Length &amp; shape</b>
+            <em>{lengthSummary}</em>
+            <Icon name="chevron-right" size={14} />
+          </button>
+          {spec && (
+            <button className="n-cell" onClick={() => setSheet("finish")}>
+              <span className="n-ic"><Icon name="sparkles" size={16} /></span>
+              <b>Finish</b>
+              <em>{finish ? TEXTURE_LABELS[finish] : read ? "As in the photo" : "Cream"}</em>
+              <Icon name="chevron-right" size={14} />
+            </button>
+          )}
+
+          <button className="n-link-mute" onClick={() => render("nail_transfer")} disabled={!inspoId || busy || preparing || reading?.status === "reading"}>
+            Compare: let YouCam copy the whole photo
+          </button>
+          <OutlinerNote sam={sam} samError={samError} flooded={flooded} picked={pickedCount > 0} />
+
+          <div className="n-cta">
+            {spec && !done && <p className="n-cta-hint">Missing nails copy the nearest one.</p>}
+            <button
+              className="n-btn n-btn-r"
+              onClick={() => (approximate ? setApproxOpen(true) : render("auto"))}
+              disabled={!spec || busy || preparing || reading?.status === "reading"}
+            >
+              <Icon name="sparkles" size={20} />
+              {preparing
+                ? "Preparing designs…"
+                : busy
+                  ? "Rendering…"
+                  : reading?.status === "reading"
+                    ? "Reading the design…"
+                    : approximate
+                      ? "Try on my hand (approximate)"
+                      : "Try on my hand"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {editing !== null && edited && editedFinger && (
+        <Sheet
+          label={`Edit the ${LABELS[editing].toLowerCase()} nail`}
+          onClose={() => setEditing(null)}
+          footer={
+            <>
               <button
+                className="n-btn n-btn-soft"
                 onClick={() => {
-                  const e = edits[FINGERS[editing]];
+                  const e = edits[edited];
                   if (!e) return;
                   setEdits(Object.fromEntries(FINGERS.map((f) => [f, { ...edits[f], ...(e.baseHex && { baseHex: e.baseHex }), ...(e.texture && { texture: e.texture }) }])));
                   if (e.baseHex) setUseDesign(FINGERS.map(() => false));
                 }}
-                disabled={!edits[FINGERS[editing]]?.baseHex && !edits[FINGERS[editing]]?.texture}
-                className="self-start rounded-full border border-zinc-300 px-3 py-1 disabled:opacity-40 dark:border-zinc-700"
+                disabled={!edits[edited]?.baseHex && !edits[edited]?.texture}
               >
-                Apply to all nails
+                Use on all nails
               </button>
-            </div>
-          )}
-          {taps.filter(Boolean).length >= 2 && (
-            <div className="flex items-center gap-2 text-xs">
-              {swapFrom === null ? (
-                <button onClick={() => setSwapFrom(taps.findIndex(Boolean))} className="rounded-full border border-zinc-300 px-3 py-1 dark:border-zinc-700" data-testid="swap">
-                  Swap two fingers
-                </button>
-              ) : (
-                <>
-                  <span className="text-amber-700">Now tap the finger to swap {LABELS[swapFrom]} with.</span>
-                  <button onClick={() => setSwapFrom(null)} className="underline">Cancel</button>
-                </>
-              )}
-            </div>
-          )}
-          <p className="text-xs text-zinc-500">
-            Tap a nail above to change its colour or finish. &quot;Design&quot; copies the nail art, &quot;Colour&quot; only its colour. Tip of the design upside down? Tap Flip.
-          </p>
-          {reading && (
-            <p className="text-sm" aria-live="polite" data-reading={reading.status}>
-              {reading.status === "reading" && "Reading the finish and pattern…"}
-              {reading.status === "done" &&
-                (reading.value.isNailDesign
-                  ? reading.value.summary || "Finish and pattern read."
-                  : "This doesn't look like a nail design. Choose a photo that shows painted nails.")}
-              {reading.status === "error" && <span className="text-amber-700">
-                  Couldn&apos;t read the finish from the photo. Choose it below.
-                  <span className="mt-1 block break-words text-xs text-zinc-500" data-testid="reading-error">{reading.error}</span>
-                </span>}
-            </p>
-          )}
-
-          {spec && (
-            <div className="flex flex-col gap-1.5">
-              <p className="text-xs font-medium">Finish</p>
-              <div className="flex flex-wrap gap-1.5" aria-label="Finish">
-                {TEXTURES.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setFinish(finish === t ? null : t)}
-                    aria-pressed={shownFinish === t}
-                    className={`rounded-full border px-3 py-1 text-xs ${shownFinish === t ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
-                  >
-                    {TEXTURE_LABELS[t]}
-                  </button>
-                ))}
+              <button className="n-btn n-btn-k" onClick={() => setEditing(null)}>Done</button>
+            </>
+          }
+        >
+          <div data-testid="finger-editor">
+            <div className="n-top">
+              <span className="n-top-nail" style={editedPreview ? undefined : { backgroundColor: editedFinger.baseHex }}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- local blob URL */}
+                {editedPreview && <img src={editedPreview} alt="" />}
+              </span>
+              <div>
+                <h2 className="n-d">{LABELS[editing]} nail</h2>
+                <p>
+                  {TEXTURE_LABELS[editedFinger.texture]}
+                  {editedFinger.pattern !== "solid" && ` · ${editedFinger.pattern.replace("_", " ")}`}
+                  {detailNote(detail[editing]) && ` · ${detailNote(detail[editing])}`}
+                </p>
               </div>
-              <p className="text-xs text-zinc-500">
-                {finish
-                  ? `${TEXTURE_LABELS[finish]} on every nail. Tap it again to go back to ${read ? "the finish read from the photo" : "Cream"}.`
-                  : read
-                    ? "Read from the photo, per nail. Tap one to use it on every nail."
-                    : "Cream unless you choose another."}
-              </p>
+              <button className="n-x" onClick={() => setEditing(null)} aria-label="Close"><Icon name="xmark" size={14} /></button>
             </div>
-          )}
-
-          <div className="flex flex-col gap-2">
-            <div className="flex rounded-full border border-zinc-300 p-1 text-sm dark:border-zinc-700" role="tablist" aria-label="Nail length">
-              {([false, true] as const).map((ext) => (
-                <button
-                  key={String(ext)}
-                  role="tab"
-                  aria-selected={extensions === ext}
-                  onClick={() => setExtensions(ext)}
-                  className={`flex-1 rounded-full px-3 py-1.5 ${extensions === ext ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : ""}`}
-                >
-                  {ext ? "Extensions" : "Keep my length"}
+            <div className="n-seg" style={{ marginTop: 20 }}>
+              {([true, false] as const).map((copy) => (
+                <button key={String(copy)} className={useDesign[editing] === copy ? "on" : ""} aria-pressed={useDesign[editing] === copy} onClick={() => setUseDesign(useDesign.map((v, k) => (k === editing ? copy : v)))}>
+                  {copy ? "Copy the art" : "Colour only"}
                 </button>
               ))}
             </div>
-            <p className="text-xs text-zinc-500">
-              {extensions
-                ? "Press-on or gel extensions in the shape and length below (guessed from the photo)."
-                : "Polish on your own nails: the art is fitted to your nail length."}
-            </p>
-            {extensions && (
-              <>
-                <div className="flex flex-wrap gap-1.5" aria-label="Shape">
-                  {TIP_SHAPES.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setTip(t)}
-                      aria-pressed={shape === t}
-                      className={`rounded-full border px-3 py-1 text-xs ${shape === t ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
-                    >
-                      {TIP_LABELS[t]}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-1.5" aria-label="Length">
-                  {LENGTHS.map((l) => (
-                    <button
-                      key={l.value}
-                      onClick={() => setLength(l.value)}
-                      aria-pressed={nailLength === l.value}
-                      className={`rounded-full border px-3 py-1 text-xs ${nailLength === l.value ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 dark:border-zinc-700"}`}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
-              </>
+            <p className="n-eye n-lab">Base colour</p>
+            <div className="n-group">
+              <label className="n-row">
+                <span className="n-swatch-dot" style={{ backgroundColor: editedFinger.baseHex }} />
+                <b>{editedFinger.baseHex}</b>
+                <em>Change</em>
+                <Icon name="chevron-right" size={13} />
+                <input
+                  type="color"
+                  value={editedFinger.baseHex}
+                  onChange={(e) => {
+                    const hex = e.target.value.toUpperCase();
+                    setEdits({ ...edits, [edited]: { ...edits[edited], baseHex: hex } });
+                    // The design cut-out would still show the photo's colour, so a recoloured nail renders as colour.
+                    setUseDesign(useDesign.map((v, k) => (k === editing ? false : v)));
+                  }}
+                  aria-label={`${LABELS[editing]} colour`}
+                />
+              </label>
+            </div>
+            {edits[edited]?.baseHex && (
+              <button className="n-link" onClick={() => setEdits({ ...edits, [edited]: { ...edits[edited], baseHex: undefined } })}>
+                Back to the photo&apos;s colour
+              </button>
             )}
+            <p className="n-eye n-lab">Finish</p>
+            <div className="n-chips">
+              {TEXTURES.map((t) => (
+                <button
+                  key={t}
+                  className={editedFinger.texture === t ? "on" : ""}
+                  aria-pressed={editedFinger.texture === t}
+                  onClick={() => setEdits({ ...edits, [edited]: { ...edits[edited], texture: edits[edited]?.texture === t ? undefined : t } })}
+                >
+                  {TEXTURE_LABELS[t]}
+                </button>
+              ))}
+            </div>
+            <div className="n-group" style={{ marginTop: 22 }}>
+              {picks[editing] && useDesign[editing] && (
+                <button className="n-row" role="switch" aria-checked={flipped[editing]} aria-label={`Turn the ${LABELS[editing].toLowerCase()} design upside down`} onClick={() => setFlipped(toggle(flipped, editing))}>
+                  <span className="n-ic"><Icon name="arrow-up-arrow-down" size={16} /></span>
+                  <b>Flip the art</b>
+                  <span className="n-switch" aria-checked={flipped[editing]}><i /></span>
+                </button>
+              )}
+              {taps.filter(Boolean).length >= 2 && (
+                <button
+                  className="n-row"
+                  data-testid="swap"
+                  onClick={() => {
+                    setSwapFrom(editing);
+                    setEditing(null);
+                  }}
+                >
+                  <span className="n-ic"><Icon name="arrow-right-arrow-left" size={16} /></span>
+                  <b>Swap with another finger</b>
+                  <Icon name="chevron-right" size={13} />
+                </button>
+              )}
+            </div>
           </div>
+        </Sheet>
+      )}
 
-          {approximate && (
-            <p className="text-xs text-amber-700">
-              The nail outlines look unsure, so YouCam&apos;s Nail Transfer will copy the whole photo instead (approximate: designs may land on other fingers). Redo the unsure taps for an exact per-finger try-on.
-            </p>
+      {sheet === "length" && (
+        <Sheet label="Length and shape" onClose={() => setSheet(null)} footer={<button className="n-btn n-btn-k" onClick={() => setSheet(null)}>Done</button>}>
+          <div className="n-top" style={{ alignItems: "flex-start", marginTop: 18 }}>
+            <div>
+              <h2 className="n-d">Length &amp; shape</h2>
+              {extensions && tip === null && length === null && (read?.shape || guess) && (
+                <p>
+                  <span style={{ color: "var(--r)", display: "flex" }}><Icon name="sparkles" size={14} /></span>
+                  Guessed from your photo
+                </p>
+              )}
+            </div>
+            <button className="n-x" onClick={() => setSheet(null)} aria-label="Close"><Icon name="xmark" size={14} /></button>
+          </div>
+          <div className="n-seg" role="tablist" aria-label="Nail length" style={{ marginTop: 20 }}>
+            {([false, true] as const).map((ext) => (
+              <button key={String(ext)} role="tab" aria-selected={extensions === ext} className={extensions === ext ? "on" : ""} onClick={() => setExtensions(ext)}>
+                {ext ? "Extensions" : "My own nails"}
+              </button>
+            ))}
+          </div>
+          {extensions ? (
+            <>
+              <p className="n-eye n-lab">Shape</p>
+              <div className="n-shapes" aria-label="Shape">
+                {TIP_SHAPES.map((t) => (
+                  <button key={t} className={`n-sh ${shape === t ? "on" : ""}`} aria-pressed={shape === t} onClick={() => setTip(t)}>
+                    <i>
+                      <svg viewBox="0 0 40 60" aria-hidden>
+                        <path d={TIP_PATHS[t]} stroke="#141210" strokeWidth="3.5" strokeLinejoin="round" />
+                      </svg>
+                    </i>
+                    <span>{TIP_LABELS[t]}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="n-eye n-lab">Length</p>
+              <div className="n-seg n-seg-tall" style={{ marginTop: 0 }} aria-label="Length">
+                {LENGTHS.map((l) => (
+                  <button key={l.value} className={nailLength === l.value ? "on" : ""} aria-pressed={nailLength === l.value} onClick={() => setLength(l.value)}>
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+              <p className="n-note" style={{ margin: "14px 0 0" }}>Press-on or gel extensions in this shape and length.</p>
+            </>
+          ) : (
+            <p className="n-note" style={{ margin: "14px 0 8px" }}>Polish on your own nails: the art is fitted to your nail length.</p>
           )}
+        </Sheet>
+      )}
+
+      {sheet === "finish" && spec && (
+        <Sheet label="Finish" onClose={() => setSheet(null)} footer={<button className="n-btn n-btn-k" onClick={() => setSheet(null)}>Done</button>}>
+          <div className="n-top" style={{ alignItems: "flex-start", marginTop: 18 }}>
+            <h2 className="n-d">Finish</h2>
+            <button className="n-x" onClick={() => setSheet(null)} aria-label="Close"><Icon name="xmark" size={14} /></button>
+          </div>
+          <div className="n-chips" style={{ marginTop: 18 }} aria-label="Finish">
+            {TEXTURES.map((t) => (
+              <button key={t} className={shownFinish === t ? "on" : ""} aria-pressed={shownFinish === t} onClick={() => setFinish(finish === t ? null : t)}>
+                {TEXTURE_LABELS[t]}
+              </button>
+            ))}
+          </div>
+          <p className="n-note" style={{ margin: "14px 0 8px" }}>
+            {finish
+              ? `${TEXTURE_LABELS[finish]} on every nail. Tap it again to go back to ${read ? "the finish read from the photo" : "Cream"}.`
+              : read
+                ? "Read from the photo, per nail. Tap one to use it on every nail."
+                : "Cream unless you choose another."}
+          </p>
+        </Sheet>
+      )}
+
+      {ownHand && (
+        <Alert
+          eyebrow="Add photo · Own hand"
+          art={<div className="n-badge"><Icon name="hand-raised" size={34} /></div>}
+          title="That looks like your own hand."
+          body="Choose the nail photo you want to copy. Your phone may have offered your latest photo first."
+          onClose={() => setOwnHand(false)}
+        >
+          <label htmlFor="inspo-file" className="n-b n-b-k">Choose again</label>
+          <button className="n-b n-b-s" onClick={() => setOwnHand(false)}>It&apos;s right</button>
+        </Alert>
+      )}
+      {!ownHand && notNails && (
+        <Alert
+          eyebrow="Add photo · Not nails"
+          /* eslint-disable-next-line @next/next/no-img-element -- static SVG illustration */
+          art={<img src="/v2/photos.svg" alt="" />}
+          title="No nail design in there."
+          body="Choose a photo that shows painted nails."
+          onClose={() => setNotNailsOff(readingKey)}
+        >
+          <label htmlFor="inspo-file" className="n-b n-b-k">Choose another photo</label>
+        </Alert>
+      )}
+      {!ownHand && finderFailed && (
+        <Alert
+          eyebrow="Check nails · None found"
+          art={<div className="n-badge"><Icon name="hand-draw" size={34} /></div>}
+          title="We couldn't spot the nails."
+          body={`Tap them yourself, from thumb to pinky. (${finding.error})`}
+          onClose={() => setFinderAlertOff(true)}
+        >
           <button
-            onClick={() => render("auto")}
-            disabled={!spec || busy || preparing || reading?.status === "reading"}
-            className="rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+            className="n-b n-b-k"
+            onClick={() => {
+              setFinderAlertOff(true);
+              go("up", () => setFixing(true));
+            }}
           >
-            {preparing
-              ? "Preparing designs…"
-              : busy
-                ? "Rendering…"
-                : reading?.status === "reading"
-                  ? "Reading the design…"
-                  : approximate
-                    ? "Try this on my hand (approximate)"
-                    : done
-                      ? "Try this on my hand"
-                      : "Try this on my hand (missing fingers copy the nearest)"}
+            Tap the nails
           </button>
-          <button onClick={() => render("nail_transfer")} disabled={!inspoId || busy || preparing || reading?.status === "reading"} className="text-sm text-zinc-500 underline disabled:opacity-40">
-            Compare: let YouCam copy the whole photo (Nail Transfer)
+        </Alert>
+      )}
+      {approxOpen && (
+        <Alert
+          eyebrow="Check nails · Unsure"
+          art={<div className="n-badge white"><Icon name="exclamationmark-triangle" size={34} /></div>}
+          title="This one will be approximate."
+          body="Some outlines look unsure, so YouCam's Nail Transfer will copy the whole photo and a design may land on another finger."
+          onClose={() => setApproxOpen(false)}
+        >
+          <button
+            className="n-b n-b-k"
+            onClick={() => {
+              setApproxOpen(false);
+              go("up", () => setFixing(true));
+            }}
+          >
+            Fix nails
           </button>
-        </>
+          <button
+            className="n-b n-b-s"
+            onClick={() => {
+              setApproxOpen(false);
+              render("auto");
+            }}
+          >
+            Try anyway
+          </button>
+        </Alert>
       )}
     </div>
   );
+}
+
+/** A "when things go wrong" card, as a sheet: one plain sentence, one way forward. */
+function Alert({ eyebrow, art, title, body, onClose, children }: { eyebrow: string; art: React.ReactNode; title: string; body: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <Sheet label={title} onClose={onClose}>
+      <p className="n-eye" style={{ color: "var(--mute)", marginTop: 14 }}>{eyebrow}</p>
+      <div className="n-alert-art">{art}</div>
+      <h2 className="n-d n-alert-title">{title}</h2>
+      <p className="n-body" style={{ marginTop: 8 }}>{body}</p>
+      <div className="n-alert-acts" style={{ paddingBottom: "calc(max(var(--sab), 12px) + 8px)" }}>{children}</div>
+    </Sheet>
+  );
+}
+
+/** Which outliner drew the shapes, so a rough outline is never mistaken for a model result. */
+function OutlinerNote({ sam, samError, flooded, picked }: { sam: "loading" | "ready" | "failed"; samError: string | null; flooded: string[]; picked: boolean }) {
+  if (sam === "failed") {
+    return (
+      <p className="n-note n-cap" data-testid="outliner-status">
+        The nail outliner (MobileSAM) couldn&apos;t run here{samError ? ` (${samError})` : ""}, so outlines come from the colour outliner and may be rough on nails that match the skin or background.
+      </p>
+    );
+  }
+  if (flooded.length > 0) {
+    return (
+      <p className="n-note n-cap" data-testid="outliner-status">
+        MobileSAM found no nail-sized shape under the {flooded.join(", ")} tap{flooded.length > 1 ? "s" : ""}, so {flooded.length > 1 ? "those outlines come" : "that outline comes"} from the colour outliner and may be rough. Undo and tap the middle of the nail to retry.
+      </p>
+    );
+  }
+  if (picked && sam === "ready") return <p className="n-note n-cap" data-testid="outliner-status">Outlines by MobileSAM.</p>;
+  return null;
 }

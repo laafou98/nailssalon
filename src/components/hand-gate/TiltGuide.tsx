@@ -16,7 +16,7 @@ export default function TiltGuide({ pose, mirrored }: { pose: HandPose; mirrored
   // CSS rotateY(+a) pushes the right edge away from the viewer; +180° shows the reverse (palm) face.
   const angle = (palm ? 180 : 0) + (farOnRight ? 1 : -1) * pose.turnDeg;
   const status = palm ? "fail" : pose.status;
-  const tone = status === "pass" ? "text-emerald-400" : status === "warn" ? "text-amber-300" : "text-pink-400";
+  const tone = status === "pass" ? "text-white" : status === "warn" ? "text-[#FFC21A]" : "text-[#FF4512]";
   // Turning a palm over puts the thumb on the other side, so the target swaps sides too.
   const targetThumbOnRight = palm ? !thumbOnRight : thumbOnRight;
   const face = "absolute inset-0 [backface-visibility:hidden]";
@@ -72,7 +72,7 @@ function HandShape({ className, variant, flip }: { className?: string; variant: 
         </g>
       )}
       {variant === "back" && (
-        <g fill="rgb(251 207 232)">
+        <g fill="#FFFFFF">
           {fingers.map((f) => (
             <ellipse key={f.x} cx={f.x + 6} cy={f.y + 6} rx={3.6} ry={4.4} />
           ))}
